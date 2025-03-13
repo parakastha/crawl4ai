@@ -8,6 +8,10 @@ from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.extraction_strategy import LLMExtractionStrategy, JsonCssExtractionStrategy
 from crawl4ai.content_filter_strategy import PruningContentFilter, BM25ContentFilter
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+from crawl4ai.deep_crawling import BFSDeepCrawlStrategy, DFSDeepCrawlStrategy, BestFirstCrawlingStrategy
+from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter, DomainFilter, ContentTypeFilter
+from crawl4ai.deep_crawling.scorers import KeywordRelevanceScorer
+from crawl4ai.content_scraping_strategy import LXMLWebScrapingStrategy
 
 # Set page config
 st.set_page_config(
@@ -83,6 +87,56 @@ with st.sidebar:
     # Advanced settings
     st.header("Advanced Settings")
     
+    # Deep Crawling Configuration
+    st.subheader("Deep Crawling")
+    enable_deep_crawl = st.toggle("Enable Deep Crawling", value=False, help="Enable deep crawling to explore multiple pages")
+    
+    if enable_deep_crawl:
+        crawl_strategy = st.selectbox(
+            "Crawling Strategy",
+            options=["BFS (Breadth-First)", "DFS (Depth-First)", "Best-First"],
+            help="Select the crawling strategy"
+        )
+        
+        max_depth = st.number_input(
+            "Maximum Depth",
+            min_value=1,
+            max_value=5,
+            value=2,
+            help="Maximum number of levels to crawl"
+        )
+        
+        max_pages = st.number_input(
+            "Maximum Pages",
+            min_value=1,
+            max_value=100,
+            value=50,
+            help="Maximum number of pages to crawl"
+        )
+        
+        include_external = st.toggle(
+            "Include External Links",
+            value=False,
+            help="Follow links to external domains"
+        )
+        
+        if crawl_strategy == "Best-First":
+            st.subheader("Best-First Configuration")
+            keywords = st.text_input(
+                "Keywords (comma-separated)",
+                placeholder="crawl, example, async, configuration",
+                help="Keywords to prioritize pages"
+            ).strip()
+            keyword_weight = st.slider(
+                "Keyword Weight",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.7,
+                step=0.1,
+                help="Weight of keyword relevance in scoring"
+            )
+
+    # Content Filter Type
     content_filter_type = st.selectbox(
         "Content Filter Type",
         options=["Pruning", "BM25"],
@@ -215,11 +269,42 @@ with tab1:
                 st.error("Invalid JSON schema")
                 return None
         
+        # Setup deep crawling strategy if enabled
+        deep_crawl_strategy = None
+        if enable_deep_crawl:
+            if crawl_strategy == "BFS (Breadth-First)":
+                deep_crawl_strategy = BFSDeepCrawlStrategy(
+                    max_depth=max_depth,
+                    include_external=include_external,
+                    max_pages=max_pages
+                )
+            elif crawl_strategy == "DFS (Depth-First)":
+                deep_crawl_strategy = DFSDeepCrawlStrategy(
+                    max_depth=max_depth,
+                    include_external=include_external,
+                    max_pages=max_pages
+                )
+            elif crawl_strategy == "Best-First" and keywords:
+                keyword_list = [k.strip() for k in keywords.split(",") if k.strip()]
+                scorer = KeywordRelevanceScorer(
+                    keywords=keyword_list,
+                    weight=keyword_weight
+                )
+                deep_crawl_strategy = BestFirstCrawlingStrategy(
+                    max_depth=max_depth,
+                    include_external=include_external,
+                    max_pages=max_pages,
+                    url_scorer=scorer
+                )
+        
         # Setup the crawler run configuration
         run_config = CrawlerRunConfig(
             cache_mode=cache_mode_map[cache_mode],
             markdown_generator=DefaultMarkdownGenerator(content_filter=content_filter),
-            extraction_strategy=extraction_strategy
+            extraction_strategy=extraction_strategy,
+            deep_crawl_strategy=deep_crawl_strategy,
+            scraping_strategy=LXMLWebScrapingStrategy(),
+            stream=True if enable_deep_crawl else False
         )
         
         # Add custom JavaScript if provided
@@ -229,8 +314,16 @@ with tab1:
         # Run the crawler
         async with AsyncWebCrawler(config=browser_config) as crawler:
             try:
-                result = await crawler.arun(url=url, config=run_config)
-                return result
+                if enable_deep_crawl:
+                    results = []
+                    async for result in await crawler.arun(url=url, config=run_config):
+                        results.append(result)
+                        # Update progress
+                        progress_text.text(f"Crawled {len(results)} pages...")
+                    return results[0] if results else None  # Return first result for display
+                else:
+                    result = await crawler.arun(url=url, config=run_config)
+                    return result
             except Exception as e:
                 st.error(f"Error during crawling: {str(e)}")
                 return None
@@ -281,9 +374,21 @@ with tab1:
                 
                 with result_tab1:
                     st.code(result.markdown.raw_markdown, language="markdown")
+                    st.download_button(
+                        label="Download Raw Markdown",
+                        data=result.markdown.raw_markdown,
+                        file_name=f"crawl4ai_raw_markdown_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                        mime="text/markdown"
+                    )
                 
                 with result_tab2:
                     st.code(result.markdown.fit_markdown, language="markdown")
+                    st.download_button(
+                        label="Download Fit Markdown",
+                        data=result.markdown.fit_markdown,
+                        file_name=f"crawl4ai_fit_markdown_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                        mime="text/markdown"
+                    )
                 
                 with result_tab3:
                     if result.extracted_content:
