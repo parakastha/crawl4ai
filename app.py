@@ -338,6 +338,19 @@ with tab1:
                             
                         st.info(f"Deep crawl complete. Retrieved {len(results)} pages.")
                         
+                        # Display individual results for debugging
+                        st.info(f"Total pages retrieved: {len(results)}")
+                        for i, r in enumerate(results):
+                            if hasattr(r, 'markdown') and hasattr(r.markdown, 'raw_markdown'):
+                                content_length = len(r.markdown.raw_markdown)
+                                st.info(f"Page {i+1}: {r.url} - Content length: {content_length} chars")
+                                # Display first 100 chars of content for the first few pages to verify content
+                                if i < 3:  # Only show first 3 to avoid cluttering the UI
+                                    preview = r.markdown.raw_markdown[:100] + "..." if len(r.markdown.raw_markdown) > 100 else r.markdown.raw_markdown
+                                    st.code(preview, language="markdown")
+                            else:
+                                st.warning(f"Page {i+1}: {r.url} - No markdown content available")
+                        
                         # Filter to max_pages if needed
                         if len(results) > max_pages:
                             st.warning(f"Limiting results to {max_pages} pages (got {len(results)})")
@@ -347,35 +360,7 @@ with tab1:
                         total_links = set()
                         total_images = set()
                         
-                        # Process all results to collect metadata
-                        for i, result in enumerate(results):
-                            # Update progress
-                            progress_text.text(f"Processing result {i+1}/{len(results)}: {result.url}")
-                            
-                            # Collect links from each result
-                            if hasattr(result, 'metadata') and 'links' in result.metadata:
-                                for link in result.metadata['links']:
-                                    if 'href' in link:
-                                        total_links.add(link['href'])
-                            
-                            # Collect images from each result
-                            if hasattr(result, 'metadata') and 'images' in result.metadata:
-                                for img in result.metadata['images']:
-                                    if 'src' in img:
-                                        total_images.add(img['src'])
-                        
-                        # Use the first result as the base for our combined result
-                        combined_result = results[0]
-                        
-                        # Update metadata
-                        if hasattr(combined_result, 'metadata'):
-                            combined_result.metadata['total_pages_crawled'] = len(results)
-                            combined_result.metadata['all_pages'] = [r.url for r in results]
-                            combined_result.metadata['links'] = [{'href': link} for link in total_links]
-                            combined_result.metadata['images'] = [{'src': img} for img in total_images]
-                            combined_result.metadata['success'] = True
-                        
-                        # Create a table of contents with proper markdown anchors
+                        # Create a table of contents
                         toc = "# Table of Contents\n\n"
                         for i, r in enumerate(results, 1):
                             page_anchor = f"page-{i}"
@@ -384,66 +369,108 @@ with tab1:
                             depth = r.metadata.get('depth', 0) if hasattr(r, 'metadata') else 0
                             toc += f"{i}. [Page {i}: {page_title} (Depth: {depth})](#{page_anchor})\n"
                         
-                        # Combine markdown from all results with clear page separation
-                        raw_markdown_parts = []
-                        fit_markdown_parts = []
-                        
-                        # Debug info
-                        st.info(f"Processing {len(results)} results for markdown content")
+                        # Collect all page content with proper formatting
+                        all_pages_content = []
+                        all_pages_fit_content = []
                         
                         for i, r in enumerate(results, 1):
                             # Create a valid markdown anchor
                             page_anchor = f"page-{i}"
-                            
-                            # Get depth info if available
                             depth = r.metadata.get('depth', 0) if hasattr(r, 'metadata') else 0
                             
                             # Add page header with URL and separator
                             page_header = f"\n\n## <a id=\"{page_anchor}\"></a>Page {i}: {r.url} (Depth: {depth})\n\n"
                             page_separator = f"{'='*80}\n\n"
                             
-                            # Get raw content with fallbacks
-                            raw_content = None
-                            
-                            # Try to get markdown content
+                            # Get raw content
+                            page_content = "[No content available]"
                             if hasattr(r, 'markdown') and r.markdown:
                                 if hasattr(r.markdown, 'raw_markdown') and r.markdown.raw_markdown:
-                                    raw_content = r.markdown.raw_markdown
+                                    page_content = r.markdown.raw_markdown
+                                    st.info(f"Found raw markdown for page {i}: {len(page_content)} chars")
                             
-                            # Final fallback
-                            if not raw_content:
-                                raw_content = f"[No content available for {r.url}]"
-                            
-                            # Get fit content with fallbacks
-                            fit_content = None
-                            
+                            # Get fit content
+                            page_fit_content = page_content
                             if hasattr(r, 'markdown') and r.markdown:
                                 if hasattr(r.markdown, 'fit_markdown') and r.markdown.fit_markdown:
-                                    fit_content = r.markdown.fit_markdown
-                                elif hasattr(r.markdown, 'raw_markdown') and r.markdown.raw_markdown:
-                                    fit_content = r.markdown.raw_markdown
+                                    page_fit_content = r.markdown.fit_markdown
                             
-                            # Final fallback for fit content
-                            if not fit_content:
-                                fit_content = raw_content
-                            
-                            # Add content to parts with proper formatting
-                            raw_markdown_parts.append(f"{page_header}{page_separator}{raw_content}")
-                            fit_markdown_parts.append(f"{page_header}{page_separator}{fit_content}")
+                            # Add to combined content
+                            all_pages_content.append(f"{page_header}{page_separator}{page_content}")
+                            all_pages_fit_content.append(f"{page_header}{page_separator}{page_fit_content}")
                         
-                        # Update the markdown content in the combined result
+                            # Collect links from each result
+                            if hasattr(r, 'metadata') and 'links' in r.metadata:
+                                for link in r.metadata['links']:
+                                    if 'href' in link:
+                                        total_links.add(link['href'])
+                            
+                            # Collect images from each result
+                            if hasattr(r, 'metadata') and 'images' in r.metadata:
+                                for img in r.metadata['images']:
+                                    if 'src' in img:
+                                        total_images.add(img['src'])
+                        
+                        # Create the final combined content
+                        final_raw = f"{toc}\n\n" + "\n\n".join(all_pages_content)
+                        final_fit = f"{toc}\n\n" + "\n\n".join(all_pages_fit_content) 
+                        
+                        # Display the combined content length for debugging
+                        st.info(f"Combined raw markdown length: {len(final_raw)}")
+                        st.info(f"Combined fit markdown length: {len(final_fit)}")
+                        
+                        # IMPORTANT: Always save to file regardless of what happens with the UI
+                        timestamp = time.strftime('%Y%m%d_%H%M%S')
+                        raw_file_path = f"crawl4ai_all_pages_raw_{timestamp}.md"
+                        fit_file_path = f"crawl4ai_all_pages_fit_{timestamp}.md"
+                        
+                        # Save the combined markdown content to files
+                        with open(raw_file_path, "w", encoding="utf-8") as file:
+                            file.write(final_raw)
+                        st.success(f"Saved all pages raw markdown to {raw_file_path}")
+
+                        with open(fit_file_path, "w", encoding="utf-8") as file:
+                            file.write(final_fit)
+                        st.success(f"Saved all pages fit markdown to {fit_file_path}")
+
+                        # Store file paths in session state for UI tabs
+                        st.session_state['last_combined_raw_path'] = raw_file_path
+                        st.session_state['last_combined_fit_path'] = fit_file_path
+                        st.session_state['last_combined_raw_content'] = final_raw
+                        st.session_state['last_combined_fit_content'] = final_fit
+
+                        # Provide download buttons for both files
+                        st.download_button(
+                            label="Download All Pages Raw Markdown",
+                            data=final_raw,
+                            file_name=f"crawl4ai_all_pages_raw_{timestamp}.md",
+                            mime="text/markdown"
+                        )
+
+                        st.download_button(
+                            label="Download All Pages Fit Markdown",
+                            data=final_fit,
+                            file_name=f"crawl4ai_all_pages_fit_{timestamp}.md",
+                            mime="text/markdown"
+                        )
+
+                        # Create a completely new result object instead of trying to modify the existing one
+                        import copy
+                        combined_result = copy.deepcopy(results[0])
+                        
+                        # Update the metadata
+                        combined_result.metadata['total_pages_crawled'] = len(results)
+                        combined_result.metadata['all_pages'] = [r.url for r in results]
+                        combined_result.metadata['links'] = [{'href': link} for link in total_links]
+                        combined_result.metadata['images'] = [{'src': img} for img in total_images]
+                        combined_result.metadata['success'] = True
+                        
+                        # Direct modification of the attributes
                         if hasattr(combined_result, 'markdown'):
-                            # Add table of contents and all page content
-                            full_raw_markdown = f"{toc}\n\n" + "\n\n".join(raw_markdown_parts)
-                            full_fit_markdown = f"{toc}\n\n" + "\n\n".join(fit_markdown_parts)
-                            
-                            # Update the markdown object
-                            combined_result.markdown.raw_markdown = full_raw_markdown
-                            combined_result.markdown.fit_markdown = full_fit_markdown
-                            
-                            # Debug info
-                            st.info(f"Combined markdown has {len(raw_markdown_parts)} pages and {len(full_raw_markdown)} characters")
+                            combined_result.markdown.raw_markdown = final_raw
+                            combined_result.markdown.fit_markdown = final_fit
                         
+                        # Return the combined result
                         return combined_result
                     except Exception as e:
                         st.error(f"Error during deep crawling: {str(e)}")
@@ -481,6 +508,20 @@ with tab1:
                 # Show success message
                 if enable_deep_crawl:
                     st.success(f"Successfully crawled {result.metadata.get('total_pages_crawled', 0)} pages starting from {url}")
+                    # Add a prominent notice about where to find the complete content
+                    st.warning(f"""
+### ⚠️ IMPORTANT: Where to find the complete content
+
+Due to limitations in the Crawl4AI library, the combined content from all pages may not display correctly in the UI tabs.
+
+**To access the complete content from all crawled pages:**
+1. Use the **Download All Pages** buttons above
+2. Check the saved files in your current directory: 
+   - `{st.session_state['last_combined_raw_path']}`
+   - `{st.session_state['last_combined_fit_path']}`
+
+These files contain the correctly combined content from all {result.metadata.get('total_pages_crawled', 0)} pages.
+""")
                 else:
                     st.success(f"Successfully crawled {url}")
                 
@@ -507,19 +548,53 @@ with tab1:
                 ])
                 
                 with result_tab1:
-                    st.code(result.markdown.raw_markdown, language="markdown")
+                    if enable_deep_crawl:
+                        # For deep crawling, try to show combined content
+                        st.info("⚠️ The UI may not display all pages. For full content, use the download buttons or saved files.")
+                        # Check if we have the combined content file path in session state
+                        if 'last_combined_raw_path' in st.session_state:
+                            try:
+                                with open(st.session_state['last_combined_raw_path'], 'r', encoding='utf-8') as f:
+                                    combined_content = f.read()
+                                st.code(combined_content, language="markdown")
+                            except:
+                                # Fallback to result object if file read fails
+                                st.code(result.markdown.raw_markdown, language="markdown")
+                        else:
+                            st.code(result.markdown.raw_markdown, language="markdown")
+                    else:
+                        # For single page crawling, show normal content
+                        st.code(result.markdown.raw_markdown, language="markdown")
+                    
                     st.download_button(
                         label="Download Raw Markdown",
-                        data=result.markdown.raw_markdown,
+                        data=st.session_state.get('last_combined_raw_content', result.markdown.raw_markdown),
                         file_name=f"crawl4ai_raw_markdown_{time.strftime('%Y%m%d_%H%M%S')}.md",
                         mime="text/markdown"
                     )
                 
                 with result_tab2:
-                    st.code(result.markdown.fit_markdown, language="markdown")
+                    if enable_deep_crawl:
+                        # For deep crawling, try to show combined content
+                        st.info("⚠️ The UI may not display all pages. For full content, use the download buttons or saved files.")
+                        # Check if we have the combined content file path in session state
+                        if 'last_combined_fit_path' in st.session_state:
+                            try:
+                                with open(st.session_state['last_combined_fit_path'], 'r', encoding='utf-8') as f:
+                                    combined_content = f.read()
+                                st.code(combined_content, language="markdown")
+                            except:
+                                # Fallback to result object if file read fails
+                                st.code(result.markdown.fit_markdown, language="markdown")
+                        else:
+                            st.code(result.markdown.fit_markdown, language="markdown")
+                    else:
+                        # For single page crawling, show normal content
+                        st.code(result.markdown.fit_markdown, language="markdown")
+                    
                     st.download_button(
                         label="Download Fit Markdown",
-                        data=result.markdown.fit_markdown,
+                        data=st.session_state.get('last_combined_fit_content', result.markdown.fit_markdown),
                         file_name=f"crawl4ai_fit_markdown_{time.strftime('%Y%m%d_%H%M%S')}.md",
                         mime="text/markdown"
                     )
@@ -601,7 +676,14 @@ with tab3:
             
             # Display result details in expandable sections
             with st.expander("Markdown Content", expanded=True):
-                st.code(result_data.markdown.fit_markdown, language="markdown")
+                # Check if this result was from a deep crawl with combined content
+                is_deep_crawl = result_data.metadata.get('total_pages_crawled', 0) > 1
+                if is_deep_crawl and 'last_combined_fit_content' in st.session_state:
+                    st.warning("⚠️ Results tab shows combined content from all pages only if viewed immediately after crawling. " +
+                              "For full content, always use the download buttons on the Single URL tab.")
+                    st.code(st.session_state.get('last_combined_fit_content', result_data.markdown.fit_markdown), language="markdown")
+                else:
+                    st.code(result_data.markdown.fit_markdown, language="markdown")
             
             with st.expander("Extracted Data"):
                 if result_data.extracted_content:
