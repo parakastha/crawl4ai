@@ -110,7 +110,7 @@ with st.sidebar:
             "Maximum Pages",
             min_value=1,
             max_value=100,
-            value=50,
+            value=10,
             help="Maximum number of pages to crawl"
         )
         
