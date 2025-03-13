@@ -315,12 +315,45 @@ with tab1:
         async with AsyncWebCrawler(config=browser_config) as crawler:
             try:
                 if enable_deep_crawl:
-                    results = []
+                    all_results = []
+                    total_links = set()
+                    total_images = set()
+                    
                     async for result in await crawler.arun(url=url, config=run_config):
-                        results.append(result)
+                        all_results.append(result)
                         # Update progress
-                        progress_text.text(f"Crawled {len(results)} pages...")
-                    return results[0] if results else None  # Return first result for display
+                        progress_text.text(f"Crawled {len(all_results)} pages...")
+                        
+                        # Collect links from each result
+                        if 'links' in result.metadata:
+                            for link in result.metadata['links']:
+                                if 'href' in link:
+                                    total_links.add(link['href'])
+                        
+                        # Collect images from each result
+                        if 'images' in result.metadata:
+                            for img in result.metadata['images']:
+                                if 'src' in img:
+                                    total_images.add(img['src'])
+                    
+                    if all_results:
+                        # Create a combined result for display
+                        combined_result = all_results[0]  # Use first result as base
+                        combined_result.metadata['total_pages_crawled'] = len(all_results)
+                        combined_result.metadata['all_pages'] = [r.url for r in all_results]
+                        combined_result.metadata['links'] = [{'href': link} for link in total_links]
+                        combined_result.metadata['images'] = [{'src': img} for img in total_images]
+                        combined_result.metadata['success'] = True
+                        
+                        # Combine markdown from all results
+                        combined_markdown = "\n\n---\n\n".join([
+                            f"# Page: {r.url}\n\n{r.markdown.raw_markdown}"
+                            for r in all_results
+                        ])
+                        combined_result.markdown.raw_markdown = combined_markdown
+                        
+                        return combined_result
+                    return None
                 else:
                     result = await crawler.arun(url=url, config=run_config)
                     return result
@@ -350,13 +383,18 @@ with tab1:
                 })
                 
                 # Show success message
-                st.success(f"Successfully crawled {url}")
+                if enable_deep_crawl:
+                    st.success(f"Successfully crawled {result.metadata.get('total_pages_crawled', 0)} pages starting from {url}")
+                else:
+                    st.success(f"Successfully crawled {url}")
                 
                 # Display some basic information about the result
                 col1, col2 = st.columns(2)
                 with col1:
                     st.markdown(f"**URL:** {url}")
                     st.markdown(f"**Title:** {result.metadata.get('title', 'N/A')}")
+                    if enable_deep_crawl:
+                        st.markdown(f"**Total Pages Crawled:** {result.metadata.get('total_pages_crawled', 0)}")
                     st.markdown(f"**Content Length:** {len(result.markdown.raw_markdown)} characters")
                     
                 with col2:
@@ -368,8 +406,8 @@ with tab1:
                     st.markdown(f"**Successful:** {result.metadata.get('success', False)}")
                 
                 # Show tabs for different result views
-                result_tab1, result_tab2, result_tab3, result_tab4 = st.tabs([
-                    "Raw Markdown", "Fit Markdown", "Extracted Data", "Metadata"
+                result_tab1, result_tab2, result_tab3, result_tab4, result_tab5 = st.tabs([
+                    "Raw Markdown", "Fit Markdown", "Extracted Data", "Metadata", "Crawled Pages"
                 ])
                 
                 with result_tab1:
@@ -405,6 +443,25 @@ with tab1:
                 
                 with result_tab4:
                     st.json(result.metadata)
+                
+                with result_tab5:
+                    if enable_deep_crawl:
+                        st.subheader("All Crawled Pages")
+                        crawled_pages = result.metadata.get('all_pages', [])
+                        for i, page_url in enumerate(crawled_pages, 1):
+                            st.markdown(f"{i}. [{page_url}]({page_url})")
+                        
+                        st.subheader("Links Found")
+                        if links_count > 0:
+                            links_df = pd.DataFrame([
+                                {
+                                    'URL': link.get('href', 'N/A'),
+                                    'Type': 'External' if link.get('href', '').startswith(('http', 'https')) and not link.get('href', '').startswith(url) else 'Internal'
+                                } for link in result.metadata.get('links', []) if 'href' in link
+                            ])
+                            st.dataframe(links_df, use_container_width=True)
+                    else:
+                        st.info("Deep crawling was not enabled for this result.")
 
 with tab2:
     st.header("Batch Crawling")
