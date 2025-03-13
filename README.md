@@ -1,16 +1,15 @@
-# Crawl4AI Web Interface
+# Crawl4AI Agent
 
-A professional and interactive web interface for the Crawl4AI library, built with Streamlit.
+A powerful AI agent that can crawl any website using the Crawl4AI library. This agent leverages the existing functionality of Crawl4AI to extract content from websites, filter it, and return it in a structured format.
 
 ## Features
 
-- **Single URL Crawling**: Crawl any website and view the results in real-time
-- **Advanced Configuration**: Configure crawling behavior, content filtering, and extraction strategies
-- **Content Filtering**: Use Pruning or BM25 filters to extract the most relevant content
+- **Website Crawling**: Crawl any website and extract content
+- **Deep Crawling**: Explore multiple pages using BFS, DFS, or Best-First strategies
+- **Content Filtering**: Filter content using Pruning or BM25 algorithms
 - **Data Extraction**: Extract structured data using LLMs or CSS selectors
-- **Custom JavaScript**: Execute custom JavaScript code on the page during crawling
-- **Results Management**: View, compare, and download crawling results
-- **User-Friendly Interface**: Intuitive UI with helpful tooltips and explanations
+- **Custom JavaScript**: Execute custom JavaScript code on pages during crawling
+- **Flexible Configuration**: Configure all aspects of the crawling process
 
 ## Installation
 
@@ -21,89 +20,120 @@ A professional and interactive web interface for the Crawl4AI library, built wit
 pip install -r requirements.txt
 ```
 
-3. Run the post-installation setup for Crawl4AI:
-
-```bash
-crawl4ai-setup
-```
+3. Set up environment variables (optional):
+   - Copy `.env.example` to `.env`
+   - Add your API keys for LLM providers if you plan to use LLM extraction
 
 ## Usage
 
-1. Start the Streamlit app:
+### Command Line Interface
+
+The agent can be used from the command line with various options:
 
 ```bash
-streamlit run app.py
+python crawl_agent.py https://example.com --headless --content-filter=Pruning
 ```
 
-2. Open your web browser and go to `http://localhost:8501`
+#### Basic Options
 
-3. Configure the crawler settings in the sidebar:
-   - Basic settings (headless mode, cache behavior)
-   - Content filtering options
-   - Data extraction strategies
-   - Custom JavaScript code
+- `url`: The URL to crawl (required)
+- `--headless`: Run browser in headless mode
+- `--verbose`: Enable verbose output
+- `--cache-mode`: Cache mode (Enabled, Bypass, Disabled)
 
-4. Enter a URL to crawl in the "Single URL" tab and click "Start Crawling"
+#### Content Filter Options
 
-5. View the results in various formats:
-   - Raw Markdown: The full extracted markdown content
-   - Fit Markdown: The filtered, LLM-friendly markdown content
-   - Extracted Data: Structured data extracted according to your configuration
-   - Metadata: Information about the crawling process and the page
+- `--content-filter`: Content filter type (Pruning, BM25)
+- `--threshold`: Pruning threshold (default: 0.48)
+- `--threshold-type`: Threshold type (fixed, auto)
+- `--min-word-threshold`: Min word threshold
+- `--user-query`: BM25 query
+- `--bm25-threshold`: BM25 threshold (default: 1.0)
 
-6. View past results in the "Results" tab
+#### Extraction Options
 
-## Advanced Features
+- `--extraction-type`: Extraction type (None, LLM, JSON CSS)
+- `--llm-provider`: LLM provider
+- `--llm-api-key`: LLM API key
+- `--llm-instruction`: LLM instruction
+- `--css-schema`: CSS schema (JSON)
 
-### LLM Data Extraction
+#### Deep Crawling Options
 
-To extract structured data using LLMs:
+- `--deep-crawl`: Enable deep crawling
+- `--crawl-strategy`: Crawling strategy (BFS (Breadth-First), DFS (Depth-First), Best-First)
+- `--max-depth`: Maximum depth (default: 2)
+- `--max-pages`: Maximum pages (default: 10)
+- `--include-external`: Include external links
+- `--keywords`: Keywords (comma-separated)
+- `--keyword-weight`: Keyword weight (default: 0.7)
 
-1. Select "LLM" in the "Extraction Type" dropdown
-2. Choose an LLM provider (OpenAI, Anthropic, etc.)
-3. Enter your API key
-4. Provide detailed extraction instructions
+#### Custom JavaScript
 
-### CSS-Based Data Extraction
+- `--js-code`: Custom JavaScript code to execute on the page
 
-To extract structured data using CSS selectors:
+### Python API
 
-1. Select "JSON CSS" in the "Extraction Type" dropdown
-2. Define your schema in the JSON format:
+You can also use the agent programmatically in your Python code:
 
-```json
-{
-  "name": "Example Schema",
-  "baseSelector": "div.item",
-  "fields": [
-    {
-      "name": "title",
-      "selector": "h2",
-      "type": "text"
-    },
-    {
-      "name": "price",
-      "selector": "span.price",
-      "type": "text"
-    }
-  ]
-}
+```python
+import asyncio
+from crawl_agent import CrawlConfig, crawl_url
+
+async def main():
+    config = CrawlConfig(
+        url="https://example.com",
+        headless=True,
+        content_filter_type="Pruning",
+        threshold=0.48,
+        enable_deep_crawl=True,
+        crawl_strategy="BFS (Breadth-First)",
+        max_depth=2,
+        max_pages=10
+    )
+    
+    result = await crawl_url(config)
+    print(result)
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-### Custom JavaScript Execution
+## Output
 
-You can execute custom JavaScript code on the page by entering it in the "JavaScript Code" field in the sidebar. This is useful for:
+The agent saves the extracted content to markdown files and returns a structured result with:
 
-- Scrolling through a page to load lazy-loaded content
-- Clicking buttons to reveal hidden content
-- Expanding sections of a page
-- Interacting with page elements
+- Success status
+- Paths to the saved markdown files
+- Metadata about the crawled pages
+- Extracted structured data (if extraction was configured)
+
+## Examples
+
+### Basic Crawling
+
+```bash
+python crawl_agent.py https://example.com
+```
+
+### Deep Crawling with BFS Strategy
+
+```bash
+python crawl_agent.py https://example.com --deep-crawl --crawl-strategy="BFS (Breadth-First)" --max-depth=3 --max-pages=20
+```
+
+### Using LLM Extraction
+
+```bash
+python crawl_agent.py https://example.com --extraction-type=LLM --llm-provider="openai/gpt-4o" --llm-instruction="Extract the main article content and key points"
+```
+
+### Using Custom JavaScript
+
+```bash
+python crawl_agent.py https://example.com --js-code="window.scrollTo(0, document.body.scrollHeight); await new Promise(r => setTimeout(r, 2000));"
+```
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgements
-
-- [Crawl4AI](https://github.com/unclecode/crawl4ai) - The underlying web crawler library
-- [Streamlit](https://streamlit.io/) - The framework used to build the web interface
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
