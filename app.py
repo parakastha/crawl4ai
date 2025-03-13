@@ -318,11 +318,19 @@ with tab1:
                     all_results = []
                     total_links = set()
                     total_images = set()
+                    pages_crawled = 0
                     
                     async for result in await crawler.arun(url=url, config=run_config):
                         all_results.append(result)
+                        pages_crawled += 1
+                        
                         # Update progress
-                        progress_text.text(f"Crawled {len(all_results)} pages...")
+                        progress_text.text(f"Crawled {pages_crawled} pages...")
+                        
+                        # Stop if we've reached max pages
+                        if pages_crawled >= max_pages:
+                            progress_text.text(f"Reached maximum pages limit ({max_pages})")
+                            break
                         
                         # Collect links from each result
                         if 'links' in result.metadata:
