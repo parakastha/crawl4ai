@@ -356,6 +356,54 @@ with tab1:
                             st.warning(f"Limiting results to {max_pages} pages (got {len(results)})")
                             results = results[:max_pages]
                         
+                        # 4. Filter out error pages from results
+                        valid_results = []
+                        for r in results:
+                            # Check for common error indicators in content or status
+                            is_error = False
+                            
+                            # Check for HTTP error status in metadata if available
+                            if hasattr(r, 'metadata') and 'status' in r.metadata:
+                                status = r.metadata.get('status')
+                                if isinstance(status, int) and status >= 400:  # HTTP error codes
+                                    is_error = True
+                                    st.warning(f"Filtering out page with error status {status}: {r.url}")
+                            
+                            # Check content for error indicators or empty content
+                            if hasattr(r, 'markdown') and hasattr(r.markdown, 'raw_markdown'):
+                                content = r.markdown.raw_markdown.lower()
+                                # Expanded list of error indicators and empty content patterns
+                                error_indicators = [
+                                    '403 forbidden', '404 not found', 'no content available', 
+                                    'access denied', '[no content available]', 'page not found',
+                                    'error 403', 'error 404', 'error 401', 'error 500'
+                                ]
+                                
+                                if any(indicator in content for indicator in error_indicators):
+                                    is_error = True
+                                    st.warning(f"Filtering out page with error content: {r.url}")
+                                
+                                # Also filter out pages with essentially no content
+                                if len(content.strip()) < 50:  # Very short content is likely not useful
+                                    is_error = True
+                                    st.warning(f"Filtering out page with minimal content: {r.url}")
+                            else:
+                                # Pages without markdown are also considered errors
+                                is_error = True
+                                st.warning(f"Filtering out page with no markdown content: {r.url}")
+                                
+                            # Only keep non-error pages
+                            if not is_error:
+                                valid_results.append(r)
+
+                        if len(valid_results) < len(results):
+                            st.info(f"Filtered out {len(results) - len(valid_results)} error or empty pages. Processing {len(valid_results)} valid pages.")
+                            results = valid_results
+                            
+                        if not results:
+                            st.error("No valid pages found after filtering. Try adjusting your filters or crawling a different URL.")
+                            return None
+                        
                         # Initialize collections for aggregating data
                         total_links = set()
                         total_images = set()
@@ -373,6 +421,7 @@ with tab1:
                         all_pages_content = []
                         all_pages_fit_content = []
                         
+                        # Process each result to build content with better handling of empty content
                         for i, r in enumerate(results, 1):
                             # Create a valid markdown anchor
                             page_anchor = f"page-{i}"
@@ -382,18 +431,20 @@ with tab1:
                             page_header = f"\n\n## <a id=\"{page_anchor}\"></a>Page {i}: {r.url} (Depth: {depth})\n\n"
                             page_separator = f"{'='*80}\n\n"
                             
-                            # Get raw content
-                            page_content = "[No content available]"
-                            if hasattr(r, 'markdown') and r.markdown:
-                                if hasattr(r.markdown, 'raw_markdown') and r.markdown.raw_markdown:
-                                    page_content = r.markdown.raw_markdown
-                                    st.info(f"Found raw markdown for page {i}: {len(page_content)} chars")
+                            # Get raw content with better handling of empty content
+                            if hasattr(r, 'markdown') and r.markdown and hasattr(r.markdown, 'raw_markdown') and r.markdown.raw_markdown and len(r.markdown.raw_markdown.strip()) > 0:
+                                page_content = r.markdown.raw_markdown
+                                st.info(f"Found raw markdown for page {i}: {len(page_content)} chars")
+                            else:
+                                # Instead of "[No content available]", provide more context
+                                page_content = f"*This page was crawled but no meaningful content could be extracted.*\n\n*URL: {r.url}*"
                             
-                            # Get fit content
-                            page_fit_content = page_content
-                            if hasattr(r, 'markdown') and r.markdown:
-                                if hasattr(r.markdown, 'fit_markdown') and r.markdown.fit_markdown:
-                                    page_fit_content = r.markdown.fit_markdown
+                            # Get fit content with similar improvements
+                            if hasattr(r, 'markdown') and r.markdown and hasattr(r.markdown, 'fit_markdown') and r.markdown.fit_markdown and len(r.markdown.fit_markdown.strip()) > 0:
+                                page_fit_content = r.markdown.fit_markdown
+                            else:
+                                # Use raw content if fit content is not available
+                                page_fit_content = page_content
                             
                             # Add to combined content
                             all_pages_content.append(f"{page_header}{page_separator}{page_content}")
@@ -413,7 +464,7 @@ with tab1:
                         
                         # Create the final combined content
                         final_raw = f"{toc}\n\n" + "\n\n".join(all_pages_content)
-                        final_fit = f"{toc}\n\n" + "\n\n".join(all_pages_fit_content) 
+                        final_fit = f"{toc}\n\n" + "\n\n".join(all_pages_fit_content)
                         
                         # Display the combined content length for debugging
                         st.info(f"Combined raw markdown length: {len(final_raw)}")
