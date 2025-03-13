@@ -304,7 +304,12 @@ with tab1:
             extraction_strategy=extraction_strategy,
             deep_crawl_strategy=deep_crawl_strategy,
             scraping_strategy=LXMLWebScrapingStrategy(),
-            stream=True if enable_deep_crawl else False
+            stream=False,  # Use non-streaming mode for deep crawling to avoid context variable errors
+            # Add these parameters to improve stability
+            wait_for="domcontentloaded",
+            word_count_threshold=0,
+            excluded_tags=["script", "style", "svg", "path", "noscript"],
+            magic=True  # Enable magic mode for better compatibility
         )
         
         # Add custom JavaScript if provided
@@ -315,53 +320,136 @@ with tab1:
         async with AsyncWebCrawler(config=browser_config) as crawler:
             try:
                 if enable_deep_crawl:
-                    all_results = []
-                    total_links = set()
-                    total_images = set()
-                    pages_crawled = 0
-                    
-                    async for result in await crawler.arun(url=url, config=run_config):
-                        all_results.append(result)
-                        pages_crawled += 1
+                    try:
+                        # Use a single crawler for deep crawling in non-streaming mode
+                        # This returns a list of all results at once
+                        progress_text.text(f"Starting deep crawl of {url}...")
                         
-                        # Update progress
-                        progress_text.text(f"Crawled {pages_crawled} pages...")
+                        # Use a single await call to get all results
+                        results = await crawler.arun(url=url, config=run_config)
                         
-                        # Stop if we've reached max pages
-                        if pages_crawled >= max_pages:
-                            progress_text.text(f"Reached maximum pages limit ({max_pages})")
-                            break
+                        if not results:
+                            st.error("No results returned from deep crawling")
+                            return None
+                            
+                        # Check if results is a list (non-streaming mode)
+                        if not isinstance(results, list):
+                            results = [results]  # Convert to list if it's a single result
+                            
+                        st.info(f"Deep crawl complete. Retrieved {len(results)} pages.")
                         
-                        # Collect links from each result
-                        if 'links' in result.metadata:
-                            for link in result.metadata['links']:
-                                if 'href' in link:
-                                    total_links.add(link['href'])
+                        # Filter to max_pages if needed
+                        if len(results) > max_pages:
+                            st.warning(f"Limiting results to {max_pages} pages (got {len(results)})")
+                            results = results[:max_pages]
                         
-                        # Collect images from each result
-                        if 'images' in result.metadata:
-                            for img in result.metadata['images']:
-                                if 'src' in img:
-                                    total_images.add(img['src'])
-                    
-                    if all_results:
-                        # Create a combined result for display
-                        combined_result = all_results[0]  # Use first result as base
-                        combined_result.metadata['total_pages_crawled'] = len(all_results)
-                        combined_result.metadata['all_pages'] = [r.url for r in all_results]
-                        combined_result.metadata['links'] = [{'href': link} for link in total_links]
-                        combined_result.metadata['images'] = [{'src': img} for img in total_images]
-                        combined_result.metadata['success'] = True
+                        # Initialize collections for aggregating data
+                        total_links = set()
+                        total_images = set()
                         
-                        # Combine markdown from all results
-                        combined_markdown = "\n\n---\n\n".join([
-                            f"# Page: {r.url}\n\n{r.markdown.raw_markdown}"
-                            for r in all_results
-                        ])
-                        combined_result.markdown.raw_markdown = combined_markdown
+                        # Process all results to collect metadata
+                        for i, result in enumerate(results):
+                            # Update progress
+                            progress_text.text(f"Processing result {i+1}/{len(results)}: {result.url}")
+                            
+                            # Collect links from each result
+                            if hasattr(result, 'metadata') and 'links' in result.metadata:
+                                for link in result.metadata['links']:
+                                    if 'href' in link:
+                                        total_links.add(link['href'])
+                            
+                            # Collect images from each result
+                            if hasattr(result, 'metadata') and 'images' in result.metadata:
+                                for img in result.metadata['images']:
+                                    if 'src' in img:
+                                        total_images.add(img['src'])
+                        
+                        # Use the first result as the base for our combined result
+                        combined_result = results[0]
+                        
+                        # Update metadata
+                        if hasattr(combined_result, 'metadata'):
+                            combined_result.metadata['total_pages_crawled'] = len(results)
+                            combined_result.metadata['all_pages'] = [r.url for r in results]
+                            combined_result.metadata['links'] = [{'href': link} for link in total_links]
+                            combined_result.metadata['images'] = [{'src': img} for img in total_images]
+                            combined_result.metadata['success'] = True
+                        
+                        # Create a table of contents with proper markdown anchors
+                        toc = "# Table of Contents\n\n"
+                        for i, r in enumerate(results, 1):
+                            page_anchor = f"page-{i}"
+                            page_title = r.url.replace('https://', '').replace('http://', '')
+                            # Add depth information if available
+                            depth = r.metadata.get('depth', 0) if hasattr(r, 'metadata') else 0
+                            toc += f"{i}. [Page {i}: {page_title} (Depth: {depth})](#{page_anchor})\n"
+                        
+                        # Combine markdown from all results with clear page separation
+                        raw_markdown_parts = []
+                        fit_markdown_parts = []
+                        
+                        # Debug info
+                        st.info(f"Processing {len(results)} results for markdown content")
+                        
+                        for i, r in enumerate(results, 1):
+                            # Create a valid markdown anchor
+                            page_anchor = f"page-{i}"
+                            
+                            # Get depth info if available
+                            depth = r.metadata.get('depth', 0) if hasattr(r, 'metadata') else 0
+                            
+                            # Add page header with URL and separator
+                            page_header = f"\n\n## <a id=\"{page_anchor}\"></a>Page {i}: {r.url} (Depth: {depth})\n\n"
+                            page_separator = f"{'='*80}\n\n"
+                            
+                            # Get raw content with fallbacks
+                            raw_content = None
+                            
+                            # Try to get markdown content
+                            if hasattr(r, 'markdown') and r.markdown:
+                                if hasattr(r.markdown, 'raw_markdown') and r.markdown.raw_markdown:
+                                    raw_content = r.markdown.raw_markdown
+                            
+                            # Final fallback
+                            if not raw_content:
+                                raw_content = f"[No content available for {r.url}]"
+                            
+                            # Get fit content with fallbacks
+                            fit_content = None
+                            
+                            if hasattr(r, 'markdown') and r.markdown:
+                                if hasattr(r.markdown, 'fit_markdown') and r.markdown.fit_markdown:
+                                    fit_content = r.markdown.fit_markdown
+                                elif hasattr(r.markdown, 'raw_markdown') and r.markdown.raw_markdown:
+                                    fit_content = r.markdown.raw_markdown
+                            
+                            # Final fallback for fit content
+                            if not fit_content:
+                                fit_content = raw_content
+                            
+                            # Add content to parts with proper formatting
+                            raw_markdown_parts.append(f"{page_header}{page_separator}{raw_content}")
+                            fit_markdown_parts.append(f"{page_header}{page_separator}{fit_content}")
+                        
+                        # Update the markdown content in the combined result
+                        if hasattr(combined_result, 'markdown'):
+                            # Add table of contents and all page content
+                            full_raw_markdown = f"{toc}\n\n" + "\n\n".join(raw_markdown_parts)
+                            full_fit_markdown = f"{toc}\n\n" + "\n\n".join(fit_markdown_parts)
+                            
+                            # Update the markdown object
+                            combined_result.markdown.raw_markdown = full_raw_markdown
+                            combined_result.markdown.fit_markdown = full_fit_markdown
+                            
+                            # Debug info
+                            st.info(f"Combined markdown has {len(raw_markdown_parts)} pages and {len(full_raw_markdown)} characters")
                         
                         return combined_result
-                    return None
+                    except Exception as e:
+                        st.error(f"Error during deep crawling: {str(e)}")
+                        import traceback
+                        st.error(traceback.format_exc())
+                        return None
                 else:
                     result = await crawler.arun(url=url, config=run_config)
                     return result
