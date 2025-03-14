@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from pydantic import BaseModel
 from crawl4ai import (AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode,
                       PruningContentFilter, BM25ContentFilter,
-                      LLMExtractionStrategy, JsonCssExtractionStrategy,
+                      LLMExtractionStrategy, JsonCssExtractionStrategy, JsonXPathExtractionStrategy,
                       BFSDeepCrawlStrategy, DFSDeepCrawlStrategy, BestFirstCrawlingStrategy,
                       DefaultMarkdownGenerator, LXMLWebScrapingStrategy)
 from crawl4ai.deep_crawling.scorers import KeywordRelevanceScorer
@@ -53,6 +53,7 @@ class CrawlConfig(BaseModel):
     enhance_content: bool = False
     store_results: bool = True
     ai_question: str = ""
+    openai_api_key: Optional[str] = None
     
     # Deep crawl options
     deep_crawl: bool = False
@@ -65,9 +66,50 @@ class CrawlConfig(BaseModel):
     extraction_strategy: str = "Basic"  # "Basic", "LLM", "JSON CSS"
     css_selector: str = ""
     
+    # URL filtering options
+    exclude_external_links: bool = False
+    exclude_social_media_links: bool = False
+    exclude_social_media_domains: List[str] = []
+    exclude_domains: List[str] = []
+    
+    # Media filtering options
+    exclude_external_images: bool = False
+    
+    # File downloading options
+    download_pdfs: bool = False
+    download_images: bool = False
+    download_documents: bool = False
+    download_dir: str = "downloads"
+    max_file_size_mb: int = 10
+    
+    # Lazy loading options
+    enable_lazy_loading: bool = False
+    lazy_load_max_scrolls: int = 10
+    lazy_load_scroll_step: int = 800
+    lazy_load_wait_time: float = 1.0
+    
+    # Multi-URL crawling
+    urls: List[str] = []
+    batch_crawl: bool = False
+    parallel_crawl: bool = False
+    max_concurrent: int = 5
+    
+    # Content chunking options
+    enable_chunking: bool = False
+    chunking_strategy: str = "semantic"  # "fixed", "sentence", "semantic"
+    chunk_size: int = 4000
+    chunk_overlap: int = 200
+    
+    # Content clustering options
+    enable_clustering: bool = False
+    clustering_strategy: str = "kmeans"  # "kmeans", "hierarchical" 
+    n_clusters: int = 5
+    
     # Page Interaction options
     # JavaScript execution
     js_code: str = ""
+    
+    # JavaScript execution
     js_only: bool = False  # Whether to run JS in the existing page without navigation
     session_id: Optional[str] = None  # Session ID for multi-step interactions
     page_timeout: int = 60000  # Page load timeout in milliseconds
@@ -118,13 +160,10 @@ class CrawlConfig(BaseModel):
     
     # File downloading options
     download_pdf: bool = False  # Download PDF files found during crawling
-    download_images: bool = False  # Download images found during crawling
     download_docs: bool = False  # Download document files (doc, docx, xls, xlsx, etc.)
     download_path: str = "./downloads"  # Path to save downloaded files
-    max_file_size_mb: int = 10  # Maximum size for downloaded files in MB
     
     # Multi-URL crawling options
-    urls: List[str] = []  # List of URLs to crawl in batch mode
     crawl_in_parallel: bool = False  # Crawl multiple URLs in parallel
     max_concurrent_crawls: int = 3  # Maximum number of concurrent crawls
     
@@ -261,6 +300,9 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
     Returns:
         The crawl results
     """
+    # Start timing the crawl
+    start_time = time.time()
+    
     # Check if we're in multi-URL mode
     if config.urls and len(config.urls) > 0:
         return await crawl_multiple_urls(config)
@@ -373,18 +415,35 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         )
         logger.info(f"Using BM25 content filter with query='{config.user_query}'")
     
-    # Configure extraction strategy
+    # Setup extraction strategy
     extraction_strategy = None
-    if config.extraction_strategy == "LLM":
-        # Use LLM extraction if available
-        pass
-    elif config.extraction_strategy == "JSON CSS" and config.css_selector:
+    
+    # Setup LLM extraction if selected
+    if config.extraction_strategy == "LLM" and config.openai_api_key:
+        try:
+            os.environ["OPENAI_API_KEY"] = config.openai_api_key
+            extraction_strategy = LLMExtractionStrategy()
+            logger.info("Using LLM extraction strategy")
+        except Exception as e:
+            logger.error(f"Error setting up LLM extraction: {e}")
+    
+    # Setup JSON CSS extraction if selected
+    elif config.extraction_strategy == "CSS Selectors" and config.css_selector:
         try:
             schema = json.loads(config.css_selector)
             extraction_strategy = JsonCssExtractionStrategy(schema=schema)
             logger.info("Using JSON CSS extraction strategy")
         except Exception as e:
             logger.error(f"Error parsing CSS schema: {e}")
+    
+    # Setup JSON XPath extraction if selected
+    elif config.extraction_strategy == "XPath Selectors" and config.css_selector:
+        try:
+            schema = json.loads(config.css_selector)
+            extraction_strategy = JsonXPathExtractionStrategy(schema=schema)
+            logger.info("Using JSON XPath extraction strategy")
+        except Exception as e:
+            logger.error(f"Error parsing XPath schema: {e}")
     
     # Setup deep crawling strategy if enabled
     deep_crawl_strategy = None
@@ -548,8 +607,9 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         # Create a directory for downloads if it doesn't exist
         os.makedirs(config.download_path, exist_ok=True)
         
-        # Track downloaded files for the result
-        result["downloaded_files"] = []
+        # Initialize an empty list to track downloaded files
+        # This will be added to the result dictionary later
+        downloaded_files = []
         
         # Get file URLs based on type
         download_js = f"""
@@ -600,353 +660,180 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
     if content_filter:
         setattr(crawler_run_config, 'content_filter', content_filter)
     
-    # Results container
+    # Initialize variables for the crawl result
+    html_content = ""
+    markdown_content = ""
+    extraction_result = {}
+    link_count = 0
+    image_count = 0
+    excluded_links = []
+    excluded_images = []
+    downloaded_files = []  # Re-initialize this here to ensure it's available in all code paths
+    
+    # Execute the crawl using AsyncWebCrawler
+    try:
+        async with AsyncWebCrawler(config=browser_config) as crawler:
+            # Run the crawler with our configuration
+            crawl_result = await crawler.arun(config.url, crawler_run_config)
+            
+            # Extract data from the crawl result
+            if hasattr(crawl_result, 'html'):
+                html_content = crawl_result.html
+            
+            if hasattr(crawl_result, 'markdown'):
+                markdown_content = crawl_result.markdown
+                logger.info(f"Generated raw markdown content ({len(markdown_content)} chars)")
+            else:
+                logger.warning("No content retrieved from URL")
+            
+            # Try to get fit content if available
+            fit_content = get_fit_content_from_result(crawl_result)
+            if fit_content:
+                logger.info(f"Found fit content ({len(fit_content)} chars)")
+            else:
+                # If no fit content found, use raw markdown as fallback
+                fit_content = markdown_content
+                logger.info("Using raw markdown as fit content")
+            
+            # Get extraction results if available
+            if hasattr(crawl_result, 'extraction'):
+                extraction_result = crawl_result.extraction
+            
+            # Get statistics if available
+            if hasattr(crawl_result, 'stats'):
+                stats = crawl_result.stats
+                link_count = stats.get('link_count', 0)
+                image_count = stats.get('image_count', 0)
+                excluded_links = stats.get('filtered_links', [])
+                excluded_images = stats.get('filtered_images', [])
+    except Exception as e:
+        logger.error(f"Error during crawling: {e}")
+        # Return a result with error information
+        return {
+            "url": config.url,
+            "title": config.url,
+            "status": "failed",
+            "error": str(e),
+            "content": "",
+            "markdown": "",
+            "raw_content": "",  # Add raw_content for app.py compatibility
+            "fit_content": "",  # Add fit_content for app.py compatibility
+            "extraction": {},
+            "stats": {
+                "crawl_time": time.time() - start_time,
+                "link_count": 0,
+                "image_count": 0,
+                "filtered_links": [],
+                "filtered_images": [],
+                "downloaded_files": []
+            }
+        }
+    
+    # Process the result for output
     result = {
         "url": config.url,
-        "crawl_time": time.time(),
-        "status": "failed",
-        "raw_content": "",
-        "fit_content": "",
-        "stats": {},
-        "ai_enhanced_content": "",
-        "ai_answer": "",
-        "downloaded_files": []
+        "title": config.url,  # Use URL as fallback since title() method is not available
+        "status": "success",  # Add success status here
+        "content": html_content,
+        "markdown": markdown_content,
+        "raw_content": markdown_content,  # Add raw_content for app.py compatibility
+        "fit_content": fit_content,
+        "extraction": extraction_result,
+        "stats": {
+            "crawl_time": time.time() - start_time,
+            "link_count": link_count,
+            "image_count": image_count,
+            "filtered_links": excluded_links,
+            "filtered_images": excluded_images,
+            "downloaded_files": downloaded_files
+        }
     }
     
-    # Execute the crawl
-    async with AsyncWebCrawler(config=browser_config) as crawler:
+    # Try to extract title from the HTML content if available
+    if html_content:
         try:
-            if config.deep_crawl:
-                try:
-                    # Use a single crawler for deep crawling in non-streaming mode
-                    logger.info(f"Starting deep crawl of {config.url}...")
-                    crawl_results = await crawler.arun(config.url, crawler_run_config)
-                    
-                    if crawl_results:
-                        logger.info(f"Deep crawl complete. Retrieved results.")
-                        
-                        # Combine all the raw markdown from successful pages
-                        combined_raw = ""
-                        combined_fit = ""
-                        
-                        # Check if result is a single CrawlResult or a list
-                        if isinstance(crawl_results, list):
-                            pages = crawl_results
-                        else:
-                            # If it's a single result object, check if it's a container
-                            if hasattr(crawl_results, '_results'):
-                                # It's a CrawlResultContainer
-                                pages = crawl_results._results
-                            else:
-                                # Single result
-                                pages = [crawl_results]
-                        
-                        logger.info(f"Processing {len(pages)} pages of results.")
-                        
-                        for idx, page in enumerate(pages, 1):
-                            # Handle both dictionary-like objects and CrawlResult objects
-                            try:
-                                # Try accessing as CrawlResult object
-                                url = getattr(page, "url", config.url if idx == 1 else "unknown")
-                                # Try to get markdown content (newer version) or raw_markdown (older version)
-                                raw_markdown = getattr(page, "markdown", None)
-                                if raw_markdown is None:
-                                    raw_markdown = getattr(page, "raw_markdown", "")
-                                
-                                # For the processed/fit content, try different possible attribute names
-                                fit_markdown = getattr(page, "fit_markdown", None)
-                                if fit_markdown is None:
-                                    fit_markdown = getattr(page, "filtered_markdown", None)
-                                if fit_markdown is None:
-                                    fit_markdown = getattr(page, "processed_markdown", None)
-                                if fit_markdown is None:
-                                    # If no specialized attribute is found, use the raw markdown
-                                    fit_markdown = raw_markdown
-                            except AttributeError:
-                                # Fall back to dictionary access if needed
-                                url = page.get("url", config.url if idx == 1 else "unknown")
-                                raw_markdown = page.get("markdown", "") or page.get("raw_markdown", "")
-                                fit_markdown = page.get("fit_markdown", "") or page.get("filtered_markdown", "") or page.get("processed_markdown", "") or raw_markdown
-                            
-                            if raw_markdown:
-                                logger.info(f"Found raw markdown for page {idx}: {len(raw_markdown)} chars")
-                                combined_raw += f"\n\n## Page: {url}\n\n{raw_markdown}"
-                            
-                            if fit_markdown:
-                                combined_fit += f"\n\n## Page: {url}\n\n{fit_markdown}"
-                        
-                        if combined_raw:
-                            logger.info(f"Combined raw markdown length: {len(combined_raw)}")
-                            result["raw_content"] = combined_raw
-                        
-                        if combined_fit:
-                            logger.info(f"Combined fit markdown length: {len(combined_fit)}")
-                            result["fit_content"] = combined_fit
-                        
-                        # Generate stats
-                        result["stats"] = {
-                            "pages_crawled": len(pages),
-                            "successful_pages": sum(1 for p in pages if (hasattr(p, "markdown") and p.markdown) or 
-                                                   (hasattr(p, "raw_markdown") and p.raw_markdown) or 
-                                                   (hasattr(p, "get") and (p.get("markdown") or p.get("raw_markdown")))),
-                            "total_content_length": len(combined_raw)
-                        }
-                        
-                        # Use AI agent for content enhancement if enabled
-                        if config.use_ai_agent and config.enhance_content and combined_raw and has_ai_agent:
-                            try:
-                                logger.info("Enhancing content with AI agent...")
-                                enhanced_content = await ai_agent.enhance_content(combined_raw, config.user_query)
-                                if enhanced_content:
-                                    result["ai_enhanced_content"] = enhanced_content
-                                    logger.info(f"AI enhanced content length: {len(enhanced_content)}")
-                                else:
-                                    # If enhance_content returns None or empty, use the raw content
-                                    result["ai_enhanced_content"] = combined_raw
-                                    logger.warning("AI enhancement returned empty result, using raw content")
-                            except Exception as e:
-                                logger.error(f"Error enhancing content with AI agent: {e}")
-                                # Use raw content as a fallback
-                                result["ai_enhanced_content"] = combined_raw
-                                logger.info(f"Using raw content as fallback for AI enhancement ({len(combined_raw)} chars)")
-                        
-                        # Use AI agent to answer question if provided
-                        if config.use_ai_agent and config.ai_question and combined_raw and has_ai_agent:
-                            try:
-                                logger.info(f"Answering question with AI agent: {config.ai_question}")
-                                answer = await ai_agent.answer_question(config.ai_question, combined_raw)
-                                if answer:
-                                    result["ai_answer"] = answer
-                                    logger.info(f"AI answer length: {len(answer)}")
-                                else:
-                                    # If answer_question returns None or empty, provide a generic message
-                                    result["ai_answer"] = "Unable to generate answer. Please try again with a different question."
-                                    logger.warning("AI answer returned empty result")
-                            except Exception as e:
-                                logger.error(f"Error answering question with AI agent: {e}")
-                                result["ai_answer"] = f"An error occurred while generating the answer: {str(e)}"
-                                logger.info("Set error message as AI answer due to exception")
-                        
-                        # Store results in AI agent memory if enabled
-                        if config.use_ai_agent and config.store_results and combined_raw and has_ai_agent:
-                            try:
-                                ai_agent.store_crawl_results(
-                                    config.url,
-                                    combined_raw,
-                                    {
-                                        "crawl_time": result["crawl_time"],
-                                        "pages_crawled": len(pages),
-                                        "user_query": config.user_query
-                                    }
-                                )
-                                logger.info("Stored crawl results in AI agent memory")
-                            except Exception as e:
-                                logger.error(f"Error storing crawl results in AI agent memory: {e}")
-                                # Continue execution even if storage fails
-                        
-                        result["status"] = "success"
-                        logger.info(f"Generated raw markdown content ({len(combined_raw)} chars)")
-                        logger.info(f"Generated fit markdown content ({len(combined_fit)} chars)")
-                    else:
-                        logger.warning("No pages retrieved from deep crawl")
-                
-                except Exception as e:
-                    logger.error(f"Error during deep crawl: {str(e)}")
-                    result["error"] = f"Deep crawl error: {str(e)}"
-            elif config.multi_step_enabled and config.multi_step_js_actions:
-                # Handle multi-step interaction
-                logger.info(f"Starting multi-step interaction with {config.url}...")
-                
-                # First step - initial page load
-                crawl_result = await crawler.arun(config.url, crawler_run_config)
-                
-                # Process the initial result
-                if crawl_result:
-                    raw_content = get_content_from_result(crawl_result)
-                    result["raw_content"] = raw_content if raw_content else ""
-                    result["fit_content"] = get_fit_content_from_result(crawl_result) or ""
-                    
-                    # Execute subsequent steps
-                    for step_idx in range(len(config.multi_step_js_actions)):
-                        if step_idx < len(config.multi_step_js_actions) and config.multi_step_js_actions[step_idx]:
-                            logger.info(f"Executing step {step_idx + 1} of multi-step interaction...")
-                            
-                            # Get the JS action, wait condition, and delay for this step
-                            js_action = config.multi_step_js_actions[step_idx]
-                            wait_condition = config.multi_step_wait_conditions[step_idx] if step_idx < len(config.multi_step_wait_conditions) else None
-                            delay = config.multi_step_delays[step_idx] if step_idx < len(config.multi_step_delays) else 0
-                            
-                            # Create step-specific config
-                            step_config = crawler_run_config.clone(
-                                js_code=js_action,
-                                wait_for=wait_condition if wait_condition else None,
-                                delay_before_return_html=delay,
-                                js_only=True,  # Always JS-only for subsequent steps
-                                session_id=config.session_id  # Keep using the same session
-                            )
-                            
-                            # Execute the step
-                            step_result = await crawler.arun(config.url, step_config)
-                            
-                            # Update the result with the new content
-                            if step_result:
-                                new_raw_content = get_content_from_result(step_result)
-                                if new_raw_content:
-                                    result["raw_content"] = new_raw_content
-                                    result["fit_content"] = get_fit_content_from_result(step_result) or ""
-                                    
-                                    # Log success
-                                    logger.info(f"Step {step_idx + 1} completed successfully, content length: {len(new_raw_content)}")
-                                else:
-                                    logger.warning(f"Step {step_idx + 1} did not produce new content")
-                            else:
-                                logger.warning(f"Step {step_idx + 1} failed")
-                    
-                    # Finally, clean up the session if needed
-                    if config.session_id:
-                        logger.info(f"Cleaning up browser session {config.session_id}")
-                        try:
-                            await crawler.crawler_strategy.kill_session(config.session_id)
-                        except Exception as e:
-                            logger.warning(f"Error cleaning up session: {str(e)}")
-                    
-                    # Set success status if we got this far
-                    result["status"] = "success"
-                else:
-                    result["error"] = "Failed to execute initial page load in multi-step interaction"
-            else:
-                # Single page crawl
-                crawler_result = await crawler.arun(config.url, crawler_run_config)
-                
-                # Handle different types of results (CrawlResultContainer, CrawlResult, dict)
-                if crawler_result:
-                    raw_content = ""
-                    fit_content = ""
-                    
-                    # Check if it's a container with _results
-                    if hasattr(crawler_result, '_results') and crawler_result._results:
-                        # Use the first result in the container
-                        page = crawler_result._results[0]
-                        try:
-                            # Try to access as a CrawlResult object
-                            raw_content = getattr(page, "markdown", None)
-                            if raw_content is None:
-                                raw_content = getattr(page, "raw_markdown", "")
-                            
-                            # For the processed/fit content, try different possible attribute names
-                            fit_content = getattr(page, "fit_markdown", None)
-                            if fit_content is None:
-                                fit_content = getattr(page, "filtered_markdown", None)
-                            if fit_content is None:
-                                fit_content = getattr(page, "processed_markdown", None)
-                            if fit_content is None:
-                                # If no specialized attribute is found, use the raw markdown
-                                fit_content = raw_content
-                        except AttributeError:
-                            logger.warning(f"Unexpected result structure in container")
-                    else:
-                        # Try to access as a direct CrawlResult object
-                        try:
-                            raw_content = getattr(crawler_result, "markdown", None)
-                            if raw_content is None:
-                                raw_content = getattr(crawler_result, "raw_markdown", "")
-                            
-                            # For the processed/fit content, try different possible attribute names
-                            fit_content = getattr(crawler_result, "fit_markdown", None)
-                            if fit_content is None:
-                                fit_content = getattr(crawler_result, "filtered_markdown", None)
-                            if fit_content is None:
-                                fit_content = getattr(crawler_result, "processed_markdown", None)
-                            if fit_content is None:
-                                # If no specialized attribute is found, use the raw markdown
-                                fit_content = raw_content
-                        except AttributeError:
-                            # Fall back to dictionary access
-                            if isinstance(crawler_result, dict):
-                                raw_content = crawler_result.get("markdown", "") or crawler_result.get("raw_markdown", "")
-                                fit_content = crawler_result.get("fit_markdown", "") or crawler_result.get("filtered_markdown", "") or crawler_result.get("processed_markdown", "") or raw_content
-                            else:
-                                logger.warning(f"Unexpected result type: {type(crawler_result)}")
-                    
-                    if raw_content:
-                        result["raw_content"] = raw_content
-                        logger.info(f"Generated raw markdown content ({len(raw_content)} chars)")
-                    
-                    if fit_content:
-                        result["fit_content"] = fit_content
-                    
-                    # Add stats to the result
-                    result["stats"] = {
-                        "pages_crawled": 1,
-                        "successful_pages": 1 if raw_content else 0,
-                        "total_content_length": len(raw_content)
-                    }
-                    
-                    # Use AI agent for content enhancement if enabled
-                    if config.use_ai_agent and config.enhance_content and raw_content and has_ai_agent:
-                        try:
-                            logger.info("Enhancing content with AI agent...")
-                            enhanced_content = await ai_agent.enhance_content(raw_content, config.user_query)
-                            if enhanced_content:
-                                result["ai_enhanced_content"] = enhanced_content
-                                logger.info(f"AI enhanced content length: {len(enhanced_content)}")
-                            else:
-                                # If enhance_content returns None or empty, use the raw content
-                                result["ai_enhanced_content"] = raw_content
-                                logger.warning("AI enhancement returned empty result, using raw content")
-                        except Exception as e:
-                            logger.error(f"Error enhancing content with AI agent: {e}")
-                            # Use raw content as a fallback
-                            result["ai_enhanced_content"] = raw_content
-                            logger.info(f"Using raw content as fallback for AI enhancement ({len(raw_content)} chars)")
-                        
-                        # Use AI agent to answer question if provided
-                        if config.use_ai_agent and config.ai_question and raw_content and has_ai_agent:
-                            try:
-                                logger.info(f"Answering question with AI agent: {config.ai_question}")
-                                answer = await ai_agent.answer_question(config.ai_question, raw_content)
-                                if answer:
-                                    result["ai_answer"] = answer
-                                    logger.info(f"AI answer length: {len(answer)}")
-                                else:
-                                    # If answer_question returns None or empty, provide a generic message
-                                    result["ai_answer"] = "Unable to generate answer. Please try again with a different question."
-                                    logger.warning("AI answer returned empty result")
-                            except Exception as e:
-                                logger.error(f"Error answering question with AI agent: {e}")
-                                result["ai_answer"] = f"An error occurred while generating the answer: {str(e)}"
-                                logger.info("Set error message as AI answer due to exception")
-                        
-                        # Store results in AI agent memory if enabled
-                        if config.use_ai_agent and config.store_results and raw_content and has_ai_agent:
-                            try:
-                                ai_agent.store_crawl_results(
-                                    config.url,
-                                    raw_content,
-                                    {
-                                        "crawl_time": result["crawl_time"],
-                                        "user_query": config.user_query
-                                    }
-                                )
-                                logger.info("Stored crawl results in AI agent memory")
-                            except Exception as e:
-                                logger.error(f"Error storing crawl results in AI agent memory: {e}")
-                                # Continue execution even if storage fails
-                        
-                        result["status"] = "success"
-                    else:
-                        logger.warning("No content retrieved from URL")
-            
-            # Save raw markdown to file if requested
-            if config.save_raw_markdown and result["raw_content"]:
-                filename = f"crawl4ai_raw_{time.strftime('%Y%m%d_%H%M%S')}.md"
-                with open(filename, "w", encoding="utf-8") as f:
-                    f.write(result["raw_content"])
-                logger.info(f"Saved raw markdown to {filename}")
-        
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html_content, 'html.parser')
+            title_tag = soup.find('title')
+            if title_tag and title_tag.text:
+                result["title"] = title_tag.text.strip()
         except Exception as e:
-            logger.error(f"Error during crawl: {e}")
-            result["error"] = str(e)
+            logger.warning(f"Could not extract title from HTML: {e}")
+
+    # Note: The result dictionary was already populated earlier, no need to redefine it
+
+    # Apply chunking if enabled
+    if config.enable_chunking:
+        try:
+            from text_chunking import get_chunker
+            
+            # Get the appropriate chunker
+            chunker = get_chunker(
+                chunker_type=config.chunking_strategy,
+                chunk_size=config.chunk_size,
+                chunk_overlap=config.chunk_overlap,
+                max_chunk_size=config.chunk_size,
+                min_chunk_size=config.chunk_size // 10
+            )
+            
+            # Chunk the content
+            if html_content:
+                html_chunks = chunker.chunk_html(html_content)
+                result["html_chunks"] = html_chunks
+                logger.info(f"Created {len(html_chunks)} HTML chunks using {config.chunking_strategy} strategy")
+            
+            if markdown_content:
+                text_chunks = chunker.chunk_text(markdown_content)
+                result["markdown_chunks"] = text_chunks
+                logger.info(f"Created {len(text_chunks)} markdown chunks using {config.chunking_strategy} strategy")
+                
+        except Exception as e:
+            logger.error(f"Error during text chunking: {e}")
+            # Don't interrupt the flow if chunking fails
+    
+    # Apply clustering if enabled
+    if config.enable_clustering and markdown_content:
+        try:
+            from clustering_strategies import get_clustering_strategy
+            
+            # Get the appropriate clustering strategy
+            clustering = get_clustering_strategy(
+                strategy_name=config.clustering_strategy,
+                n_clusters=config.n_clusters
+            )
+            
+            # Use chunks if available, otherwise use the full content
+            if config.enable_chunking and "markdown_chunks" in result and result["markdown_chunks"]:
+                texts = result["markdown_chunks"]
+            else:
+                # Create simple paragraph-based chunks for clustering
+                texts = [p for p in markdown_content.split("\n\n") if p.strip()]
+            
+            # Apply clustering
+            if texts:
+                cluster_labels, cluster_model = clustering.cluster(texts)
+                cluster_summary = clustering.get_cluster_summary(texts, cluster_labels)
+                
+                # Get keywords for each cluster
+                cluster_keywords = {}
+                for cluster_idx in range(max(cluster_labels) + 1 if cluster_labels else 0):
+                    keywords = clustering.get_cluster_keywords(cluster_model, cluster_idx)
+                    cluster_keywords[cluster_idx] = keywords
+                
+                # Add clustering results to output
+                result["clustering"] = {
+                    "strategy": config.clustering_strategy,
+                    "n_clusters": config.n_clusters,
+                    "labels": cluster_labels,
+                    "summary": cluster_summary,
+                    "keywords": cluster_keywords
+                }
+                
+                logger.info(f"Applied {config.clustering_strategy} clustering, created {len(cluster_summary)} clusters")
+            
+        except Exception as e:
+            logger.error(f"Error during clustering: {e}")
+            # Don't interrupt the flow if clustering fails
     
     return result
 
@@ -1139,7 +1026,7 @@ def parse_args():
     parser.add_argument("--follow-external-links", action="store_true", help="Follow external links")
     
     # Extraction strategy
-    parser.add_argument("--extraction-strategy", choices=["Basic", "LLM", "JSON CSS"], help="Extraction strategy")
+    parser.add_argument("--extraction-strategy", choices=["Basic", "LLM", "CSS Selectors", "XPath Selectors"], help="Extraction strategy")
     parser.add_argument("--css-selector", help="CSS selector")
     
     # JavaScript execution
@@ -1198,7 +1085,7 @@ async def main():
     result = await crawl_url(config)
     
     # Print the result
-    if result.get("success"):
+    if result.get("status") == "success":
         logger.info("Crawl completed successfully!")
         logger.info(f"Raw markdown content: {result['raw_content']}")
         logger.info(f"Fit markdown content: {result['fit_content']}")

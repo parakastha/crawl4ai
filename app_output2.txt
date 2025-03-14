@@ -1,0 +1,29 @@
+
+  You can now view your Streamlit app in your browser.
+
+  URL: http://localhost:8501
+
+2025-03-14 00:34:03,231 - crawl_agent - INFO - Starting crawl of https://docs.crawl4ai.com/
+2025-03-14 00:34:03,247 - crawl_agent - INFO - Using Pruning content filter with threshold=0.48
+2025-03-14 00:34:03,248 - crawl_agent - INFO - Valid cache modes: ['ENABLED', 'DISABLED', 'READ_ONLY', 'WRITE_ONLY', 'BYPASS']
+2025-03-14 00:34:03,248 - crawl_agent - INFO - Using cache mode: CacheMode.ENABLED
+[FETCH]... ↓ https://docs.crawl4ai.com/... | Status: True | Time: 0.03s
+[COMPLETE] ● https://docs.crawl4ai.com/... | Status: True | Total: 0.03s
+2025-03-14 00:34:04,374 - crawl_agent - INFO - Generated raw markdown content (8642 chars)
+2025-03-14 00:34:24,444 - crawl_agent - INFO - Starting crawl of https://docs.crawl4ai.com/
+2025-03-14 00:34:24,472 - crawl_agent - INFO - Using Pruning content filter with threshold=0.48
+2025-03-14 00:34:24,473 - crawl_agent - INFO - Valid cache modes: ['ENABLED', 'DISABLED', 'READ_ONLY', 'WRITE_ONLY', 'BYPASS']
+2025-03-14 00:34:24,473 - crawl_agent - INFO - Using cache mode: CacheMode.ENABLED
+[FETCH]... ↓ https://docs.crawl4ai.com/... | Status: True | Time: 0.03s
+[COMPLETE] ● https://docs.crawl4ai.com/... | Status: True | Total: 0.03s
+2025-03-14 00:34:25,444 - crawl_agent - INFO - Generated raw markdown content (8642 chars)
+2025-03-14 00:37:00,614 - crawl_agent - INFO - Starting crawl of https://docs.crawl4ai.com/
+2025-03-14 00:37:00,634 - crawl_agent - INFO - Using Pruning content filter with threshold=0.48
+2025-03-14 00:37:00,634 - crawl_agent - INFO - Valid cache modes: ['ENABLED', 'DISABLED', 'READ_ONLY', 'WRITE_ONLY', 'BYPASS']
+2025-03-14 00:37:00,635 - crawl_agent - INFO - Using cache mode: CacheMode.ENABLED
+[FETCH]... ↓ https://docs.crawl4ai.com/... | Status: True | Time: 0.02s
+[COMPLETE] ● https://docs.crawl4ai.com/... | Status: True | Total: 0.04s
+2025-03-14 00:37:01,833 - crawl_agent - INFO - Generated raw markdown content (8642 chars)
+  Stopping...
+Starting Crawl4AI development server with hot reload...
+Killing existing Streamlit process: Success!

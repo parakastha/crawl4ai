@@ -22,14 +22,14 @@ st.markdown("""
 }
 .feature-title {
     font-weight: bold;
-    color: #4A4FE8;
+        color: #4A4FE8;
 }
 .result-section {
     background-color: #f8f9fa;
     border-radius: 5px;
     padding: 15px;
     margin-top: 15px;
-}
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -310,12 +310,37 @@ with st.sidebar:
             max_range = 0.5
 
     with st.expander("🔧 Advanced Settings", expanded=False):
-        extraction_strategy = st.selectbox("Extraction Strategy", ["Basic", "LLM", "JSON CSS"], index=0)
-        
-        if extraction_strategy == "LLM":
-            st.warning("LLM extraction requires additional configuration. Some features may be unavailable.")
-        elif extraction_strategy == "JSON CSS":
-            css_selector = st.text_area("CSS Selectors (JSON)", value='{"title": "h1", "content": "main"}')
+        # Extraction strategy selector
+        extraction_strategy = st.selectbox(
+            "Extraction Strategy",
+            ["Auto", "CSS Selectors", "XPath Selectors", "LLM"],
+            help="Choose extraction strategy for webpage content. Auto: default extraction, CSS/XPath: extract using selectors, LLM: AI-powered extraction"
+        )
+
+        if extraction_strategy == "CSS Selectors":
+            css_selectors_schema = st.text_area(
+                "CSS Selectors Schema (JSON)",
+                value=json.dumps({
+                    "title": "h1",
+                    "content": "article p",
+                    "author": ".author-name"
+                }, indent=2),
+                height=200,
+                help="JSON schema mapping field names to CSS selectors"
+            )
+        elif extraction_strategy == "XPath Selectors":
+            xpath_selectors_schema = st.text_area(
+                "XPath Selectors Schema (JSON)",
+                value=json.dumps({
+                    "title": "//h1",
+                    "content": "//article//p",
+                    "author": "//*[contains(@class, 'author-name')]"
+                }, indent=2),
+            height=200,
+                help="JSON schema mapping field names to XPath expressions"
+            )
+        elif extraction_strategy == "LLM":
+            st.warning("LLM extraction requires an OpenAI API key in the settings tab.")
         
         save_raw_markdown = st.checkbox("Save Raw Markdown to File", value=False)
         
@@ -378,6 +403,75 @@ with st.sidebar:
             
             st.info("Files will be saved to the specified folder with their original filenames. " +
                    "The crawler will skip files larger than the maximum size.")
+
+    # Add a divider for better organization
+    st.divider()
+    
+    # Content Processing Options
+    st.subheader("🧩 Content Processing")
+    
+    # Add chunking options
+    enable_chunking = st.checkbox(
+        "Enable Text Chunking", 
+        value=False,
+        help="Split content into manageable chunks for better processing"
+    )
+    
+    if enable_chunking:
+        chunking_col1, chunking_col2 = st.columns(2)
+        
+        with chunking_col1:
+            chunking_strategy = st.selectbox(
+                "Chunking Strategy",
+                ["semantic", "sentence", "fixed"],
+                help="Method to split content: semantic (preserves meaning), sentence (splits by sentences), fixed (equal size chunks)"
+            )
+        
+        with chunking_col2:
+            chunk_size = st.number_input(
+                "Max Chunk Size (chars)",
+                min_value=1000,
+                max_value=10000,
+                value=4000,
+                step=500,
+                help="Maximum size of each chunk in characters"
+            )
+            
+            chunk_overlap = st.number_input(
+                "Chunk Overlap (chars)",
+                min_value=0,
+                max_value=1000,
+                value=200,
+                step=50,
+                help="Number of characters to overlap between chunks"
+            )
+    
+    # Add clustering options
+    enable_clustering = st.checkbox(
+        "Enable Content Clustering", 
+        value=False,
+        help="Group similar content together using machine learning"
+    )
+    
+    if enable_clustering:
+        clustering_col1, clustering_col2 = st.columns(2)
+        
+        with clustering_col1:
+            clustering_strategy = st.selectbox(
+                "Clustering Algorithm",
+                ["kmeans", "hierarchical"],
+                help="Method to cluster content: K-means (centroid-based), Hierarchical (tree-based)"
+            )
+        
+        with clustering_col2:
+            n_clusters = st.number_input(
+                "Number of Clusters",
+                min_value=2,
+                max_value=20,
+                value=5,
+                step=1,
+                help="Target number of content clusters to create"
+            )
 
 # Main content area with crawl button
 crawl_button = st.button("🕸️ Start Crawling")
@@ -468,7 +562,7 @@ if crawl_button:
             
             # Advanced settings
             extraction_strategy=extraction_strategy,
-            css_selector=css_selector if extraction_strategy == "JSON CSS" else "",
+            css_selector=css_selectors_schema if extraction_strategy == "CSS Selectors" else xpath_selectors_schema if extraction_strategy == "XPath Selectors" else "",
             magic=magic,
             remove_overlay_elements=remove_overlay_elements,
             save_raw_markdown=save_raw_markdown,
@@ -481,7 +575,21 @@ if crawl_button:
             exclude_external_images=exclude_external_images,
             keep_data_attributes=keep_data_attributes,
             remove_forms=remove_forms,
-            keep_attrs=keep_attrs
+            keep_attrs=keep_attrs,
+            
+            # Chunking options
+            enable_chunking=enable_chunking,
+            chunking_strategy=chunking_strategy if enable_chunking else "semantic",
+            chunk_size=chunk_size if enable_chunking else 4000,
+            chunk_overlap=chunk_overlap if enable_chunking else 200,
+            
+            # Clustering options
+            enable_clustering=enable_clustering,
+            clustering_strategy=clustering_strategy if enable_clustering else "kmeans",
+            n_clusters=n_clusters if enable_clustering else 5,
+            
+            # OpenAI API key for LLM extraction
+            openai_api_key=os.getenv("OPENAI_API_KEY") if extraction_strategy == "LLM" else None
         )
         
         # Run the crawl
@@ -585,15 +693,15 @@ if crawl_button:
                                 file_name=f"crawl4ai_raw_{time.strftime('%Y%m%d_%H%M%S')}.md",
                                 mime="text/markdown"
                             )
-                        
-                        with col2:
-                            if result.get("fit_content"):
-                                st.download_button(
-                                    label="Download Processed Markdown",
-                                    data=result["fit_content"],
-                                    file_name=f"crawl4ai_processed_{time.strftime('%Y%m%d_%H%M%S')}.md",
-                                    mime="text/markdown"
-                                )
+                    
+                    with col2:
+                        if result.get("fit_content"):
+                            st.download_button(
+                                label="Download Processed Markdown",
+                                data=result["fit_content"],
+                                file_name=f"crawl4ai_processed_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                                mime="text/markdown"
+                            )
                         
                         with col3:
                             if result.get("ai_enhanced_content"):
@@ -708,3 +816,126 @@ if not crawl_button and "crawl_result" in st.session_state:
     if st.button("View Last Crawl Result"):
         result = st.session_state.crawl_result
         # Then reuse the code from above to display the results
+
+# Display crawl results
+if "result" in st.session_state and st.session_state["result"]:
+    result = st.session_state["result"]
+    
+    # Create tabs for different views of the data
+    result_tabs = st.tabs(["📝 Content", "🌐 Links", "🖼️ Media", "📊 Stats", "🧩 Chunks", "🔍 Clusters"])
+    
+    with result_tabs[0]:  # Content tab
+        if "markdown" in result:
+            st.markdown(result["markdown"])
+        elif "content" in result:
+            st.text(result["content"])
+        else:
+            st.warning("No content extracted from the webpage.")
+    
+    with result_tabs[1]:  # Links tab
+        if "links" in result and result["links"]:
+            st.subheader("📋 Extracted Links")
+            
+            # Create a DataFrame for better display
+            links_data = []
+            for link in result["links"]:
+                link_type = "External" if link.get("is_external", False) else "Internal"
+                links_data.append({
+                    "URL": link.get("url", ""),
+                    "Text": link.get("text", ""),
+                    "Type": link_type
+                })
+            
+            if links_data:
+                st.dataframe(links_data, use_container_width=True)
+            else:
+                st.info("No links found.")
+        else:
+            st.info("No links extracted.")
+    
+    with result_tabs[2]:  # Media tab
+        if "images" in result and result["images"]:
+            st.subheader("🖼️ Images")
+            
+            # Create a DataFrame for better display
+            images_data = []
+            for img in result["images"]:
+                img_type = "External" if img.get("is_external", False) else "Internal"
+                images_data.append({
+                    "URL": img.get("src", ""),
+                    "Alt Text": img.get("alt", ""),
+                    "Type": img_type
+                })
+            
+            if images_data:
+                st.dataframe(images_data, use_container_width=True)
+            else:
+                st.info("No images found.")
+        else:
+            st.info("No images extracted.")
+    
+    with result_tabs[3]:  # Stats tab
+        if "stats" in result:
+            stats = result["stats"]
+            
+            st.subheader("📊 Crawl Statistics")
+            
+            # Create columns for a cleaner layout
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("Crawl Time", f"{stats.get('crawl_time', 0):.2f} seconds")
+                st.metric("Links Found", stats.get("link_count", 0))
+                st.metric("Images Found", stats.get("image_count", 0))
+            
+            with col2:
+                st.metric("Filtered Links", len(stats.get("filtered_links", [])))
+                st.metric("Filtered Images", stats.get("filtered_images", 0))
+                st.metric("Downloaded Files", len(stats.get("downloaded_files", [])))
+            
+            # List downloaded files if any
+            if "downloaded_files" in stats and stats["downloaded_files"]:
+                st.subheader("📥 Downloaded Files")
+                for file_path in stats["downloaded_files"]:
+                    st.text(file_path)
+            else:
+                st.info("No statistics available.")
+    
+    with result_tabs[4]:  # Chunks tab
+        if "markdown_chunks" in result and result["markdown_chunks"]:
+            chunks = result["markdown_chunks"]
+            st.subheader(f"🧩 Content Chunks ({len(chunks)})")
+            
+            for i, chunk in enumerate(chunks):
+                with st.expander(f"Chunk {i+1} ({len(chunk)} chars)"):
+                    st.markdown(chunk)
+        
+        elif "html_chunks" in result and result["html_chunks"]:
+            chunks = result["html_chunks"]
+            st.subheader(f"🧩 HTML Chunks ({len(chunks)})")
+            
+            for i, chunk in enumerate(chunks):
+                with st.expander(f"Chunk {i+1} ({len(chunk)} chars)"):
+                    st.code(chunk[:1000] + "..." if len(chunk) > 1000 else chunk, language="html")
+        else:
+            st.info("No chunks available. Enable chunking in advanced settings to see content chunks.")
+    
+    with result_tabs[5]:  # Clusters tab
+        if "clustering" in result and result["clustering"]:
+            clustering = result["clustering"]
+            
+            st.subheader(f"🔍 Content Clusters ({len(clustering['summary'])})")
+            
+            # Display cluster information
+            for cluster_idx, summary in clustering["summary"].items():
+                # Get keywords for this cluster
+                keywords = clustering["keywords"].get(cluster_idx, [])
+                keywords_str = ", ".join(keywords) if keywords else "No keywords found"
+                
+                with st.expander(f"Cluster {cluster_idx+1} ({summary['count']} items) - Keywords: {keywords_str}"):
+                    for i, sample in enumerate(summary["samples"]):
+                        st.markdown(f"**Sample {i+1}:**")
+                        st.markdown(sample[:500] + "..." if len(sample) > 500 else sample)
+                        st.divider()
+        else:
+            st.info("No clustering results available. Enable clustering in advanced settings to group similar content.")

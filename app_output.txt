@@ -1,0 +1,38 @@
+
+  You can now view your Streamlit app in your browser.
+
+  URL: http://localhost:8501
+
+2025-03-14 00:33:21,315 - crawl_agent - INFO - Starting crawl of https://docs.crawl4ai.com/
+2025-03-14 00:33:21,332 - crawl_agent - INFO - Using Pruning content filter with threshold=0.48
+2025-03-14 00:33:21,333 - crawl_agent - INFO - Valid cache modes: ['ENABLED', 'DISABLED', 'READ_ONLY', 'WRITE_ONLY', 'BYPASS']
+2025-03-14 00:33:21,333 - crawl_agent - INFO - Using cache mode: CacheMode.ENABLED
+[FETCH]... ↓ https://docs.crawl4ai.com/... | Status: True | Time: 0.04s
+[COMPLETE] ● https://docs.crawl4ai.com/... | Status: True | Total: 0.04s
+2025-03-14 00:33:22,475 - crawl_agent - INFO - Generated raw markdown content (8642 chars)
+2025-03-14 00:33:22.566 Uncaught app execution
+Traceback (most recent call last):
+  File "/Users/sundarshrestha/.pyenv/versions/3.11.5/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 88, in exec_func_with_error_handling
+    result = func()
+             ^^^^^^
+  File "/Users/sundarshrestha/.pyenv/versions/3.11.5/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 579, in code_to_exec
+    exec(code, module.__dict__)
+  File "/Users/sundarshrestha/Documents/GitHub/crawl4ai/app.py", line 596, in <module>
+    result = asyncio.run(crawl_url(config))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sundarshrestha/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/sundarshrestha/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sundarshrestha/.pyenv/versions/3.11.5/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/sundarshrestha/Documents/GitHub/crawl4ai/crawl_agent.py", line 715, in crawl_url
+    "downloaded_files": downloaded_files
+                        ^^^^^^^^^^^^^^^^
+UnboundLocalError: cannot access local variable 'downloaded_files' where it is not associated with a value
+  Stopping...
+Starting Crawl4AI development server with hot reload...
+Killing existing Streamlit process: Success!

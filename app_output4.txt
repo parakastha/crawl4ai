@@ -1,0 +1,13 @@
+
+  You can now view your Streamlit app in your browser.
+
+  URL: http://localhost:8501
+
+2025-03-14 00:45:49,628 - crawl_agent - INFO - Starting crawl of https://docs.crawl4ai.com/
+2025-03-14 00:45:49,645 - crawl_agent - INFO - Using Pruning content filter with threshold=0.48
+2025-03-14 00:45:49,645 - crawl_agent - INFO - Valid cache modes: ['ENABLED', 'DISABLED', 'READ_ONLY', 'WRITE_ONLY', 'BYPASS']
+2025-03-14 00:45:49,646 - crawl_agent - INFO - Using cache mode: CacheMode.ENABLED
+[FETCH]... ↓ https://docs.crawl4ai.com/... | Status: True | Time: 0.06s
+[COMPLETE] ● https://docs.crawl4ai.com/... | Status: True | Total: 0.06s
+2025-03-14 00:45:50,790 - crawl_agent - INFO - Generated raw markdown content (8642 chars)
+2025-03-14 00:45:50,790 - crawl_agent - INFO - Using raw markdown as fit content
