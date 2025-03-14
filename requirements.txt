@@ -1,3 +1,6 @@
-crawl4ai[all]>=0.5.0
-pydantic>=2.0.0
-python-dotenv>=1.0.0
+streamlit
+python-dotenv
+asyncio
+crawl4ai
+pydantic
+requests
