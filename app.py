@@ -229,21 +229,51 @@ if start_button and url:
                     <div class="result-section">
                     """, unsafe_allow_html=True)
                     
-                    # Read the raw markdown file
-                    try:
-                        with open(result['raw_file_path'], 'r', encoding='utf-8') as f:
-                            raw_markdown = f.read()
+                    # Display raw markdown content directly from result
+                    raw_markdown = result.get('raw_content', '')
+                    if raw_markdown:
                         st.code(raw_markdown, language="markdown")
-                    except Exception as e:
-                        st.error(f"Could not read raw markdown file: {e}")
+                    else:
+                        st.warning("No raw markdown content available")
                     
                     # Download button for raw markdown
-                    st.download_button(
-                        label="Download Raw Markdown",
-                        data=raw_markdown,
-                        file_name=f"crawl4ai_raw_{time.strftime('%Y%m%d_%H%M%S')}.md",
-                        mime="text/markdown"
-                    )
+                    if raw_markdown:
+                        custom_filename = st.text_input("Custom filename prefix for download (optional)", 
+                                                       value="crawl4ai", 
+                                                       key="raw_custom_filename")
+                        st.download_button(
+                            label="Download Raw Markdown",
+                            data=raw_markdown,
+                            file_name=f"{custom_filename}_raw_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                            mime="text/markdown"
+                        )
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
+                
+                # Fit Markdown Section
+                with st.expander("📝 Processed Markdown", expanded=False):
+                    st.markdown("""
+                    <div class="result-section">
+                    """, unsafe_allow_html=True)
+                    
+                    # Display fit markdown content directly from result
+                    fit_markdown = result.get('fit_content', '')
+                    if fit_markdown:
+                        st.code(fit_markdown, language="markdown")
+                    else:
+                        st.warning("No processed markdown content available")
+                    
+                    # Download button for fit markdown
+                    if fit_markdown:
+                        custom_filename = st.text_input("Custom filename prefix for download (optional)", 
+                                                       value="crawl4ai", 
+                                                       key="fit_custom_filename")
+                        st.download_button(
+                            label="Download Processed Markdown",
+                            data=fit_markdown,
+                            file_name=f"{custom_filename}_fit_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                            mime="text/markdown"
+                        )
                     
                     st.markdown("</div>", unsafe_allow_html=True)
                 

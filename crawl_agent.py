@@ -343,22 +343,20 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                     logger.info(f"Combined raw markdown length: {len(final_raw)}")
                     logger.info(f"Combined fit markdown length: {len(final_fit)}")
                     
-                    # Save the combined markdown content to files only if content is meaningful
+                    # Instead of saving to files, just return the content in the response
                     timestamp = time.strftime('%Y%m%d_%H%M%S')
-                    raw_file_path = None
-                    fit_file_path = None
+                    raw_content = None
+                    fit_content = None
                     
                     if is_meaningful_content(final_raw):
-                        raw_file_path = f"crawl4ai_all_pages_raw_{timestamp}.md"
-                        with open(raw_file_path, "w", encoding="utf-8") as file:
-                            file.write(final_raw)
-                        logger.info(f"Saved all pages raw markdown to {raw_file_path}")
+                        raw_content = final_raw
+                        # Don't save to file, just log
+                        logger.info(f"Generated raw markdown content ({len(raw_content)} chars)")
                     
                     if is_meaningful_content(final_fit):
-                        fit_file_path = f"crawl4ai_all_pages_fit_{timestamp}.md"
-                        with open(fit_file_path, "w", encoding="utf-8") as file:
-                            file.write(final_fit)
-                        logger.info(f"Saved all pages fit markdown to {fit_file_path}")
+                        fit_content = final_fit
+                        # Don't save to file, just log
+                        logger.info(f"Generated fit markdown content ({len(fit_content)} chars)")
                     
                     # Create a completely new result object instead of trying to modify the existing one
                     import copy
@@ -380,8 +378,8 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                     return {
                         "success": True,
                         "total_pages": len(results),
-                        "raw_file_path": raw_file_path,
-                        "fit_file_path": fit_file_path,
+                        "raw_content": raw_content,
+                        "fit_content": fit_content,
                         "metadata": combined_result.metadata,
                         "extracted_content": combined_result.extracted_content if hasattr(combined_result, 'extracted_content') else None
                     }
@@ -411,27 +409,25 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                     logger.error("Result doesn't have expected markdown attributes")
                     return {"error": "Result doesn't have expected markdown attributes"}
                 
-                # Save the markdown content to files only if content is meaningful
+                # Instead of saving to files, just return the content in the response
                 timestamp = time.strftime('%Y%m%d_%H%M%S')
-                raw_file_path = None
-                fit_file_path = None
+                raw_content = None
+                fit_content = None
                 
                 if is_meaningful_content(result.markdown.raw_markdown):
-                    raw_file_path = f"crawl4ai_raw_{timestamp}.md"
-                    with open(raw_file_path, "w", encoding="utf-8") as file:
-                        file.write(result.markdown.raw_markdown)
-                    logger.info(f"Saved raw markdown to {raw_file_path}")
+                    raw_content = result.markdown.raw_markdown
+                    # Don't save to file, just log
+                    logger.info(f"Generated raw markdown content ({len(raw_content)} chars)")
                 
                 if is_meaningful_content(result.markdown.fit_markdown):
-                    fit_file_path = f"crawl4ai_fit_{timestamp}.md"
-                    with open(fit_file_path, "w", encoding="utf-8") as file:
-                        file.write(result.markdown.fit_markdown)
-                    logger.info(f"Saved fit markdown to {fit_file_path}")
+                    fit_content = result.markdown.fit_markdown
+                    # Don't save to file, just log
+                    logger.info(f"Generated fit markdown content ({len(fit_content)} chars)")
                 
                 return {
                     "success": True,
-                    "raw_file_path": raw_file_path,
-                    "fit_file_path": fit_file_path,
+                    "raw_content": raw_content,
+                    "fit_content": fit_content,
                     "metadata": result.metadata,
                     "extracted_content": result.extracted_content if hasattr(result, 'extracted_content') else None
                 }
@@ -515,8 +511,8 @@ async def main():
     # Print the result
     if result.get("success"):
         logger.info("Crawl completed successfully!")
-        logger.info(f"Raw markdown saved to: {result['raw_file_path']}")
-        logger.info(f"Fit markdown saved to: {result['fit_file_path']}")
+        logger.info(f"Raw markdown content: {result['raw_content']}")
+        logger.info(f"Fit markdown content: {result['fit_content']}")
         
         if result.get("total_pages"):
             logger.info(f"Total pages crawled: {result['total_pages']}")
