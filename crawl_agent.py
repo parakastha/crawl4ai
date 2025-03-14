@@ -4,7 +4,7 @@ import logging
 import time
 import os
 import argparse
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple, Union
 from pydantic import BaseModel
 from crawl4ai import (AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode,
                       PruningContentFilter, BM25ContentFilter,
@@ -61,66 +61,154 @@ class CrawlConfig(BaseModel):
     extraction_strategy: str = "Basic"  # "Basic", "LLM", "JSON CSS"
     css_selector: str = ""
     
+    # Page Interaction options
     # JavaScript execution
     js_code: str = ""
-    delay_before_return_html: int = 0
-    wait_for: str = ""  # CSS selector or XPath
+    js_only: bool = False  # Whether to run JS in the existing page without navigation
+    session_id: Optional[str] = None  # Session ID for multi-step interactions
+    page_timeout: int = 60000  # Page load timeout in milliseconds
+    delay_before_return_html: int = 0  # Delay in seconds after page load
+    wait_for: str = ""  # CSS selector or JS expression to wait for (prefix with "css:" or "js:")
+    
+    # Advanced interaction options
+    simulate_user: bool = False  # Simulate human-like behavior
+    override_navigator: bool = False  # Override navigator properties to avoid bot detection
+    mean_delay: float = 1.0  # Mean delay between requests in seconds (for multi-URL crawling)
+    max_range: float = 0.5  # Max variance of delay between requests
+    
+    # Multi-step interaction
+    multi_step_enabled: bool = False  # Enable multi-step interaction
+    multi_step_js_actions: List[str] = []  # List of JS actions to perform sequentially
+    multi_step_wait_conditions: List[str] = []  # List of wait conditions for each step
+    multi_step_delays: List[int] = []  # Delays after each step in seconds
     
     # Output options
     remove_overlay_elements: bool = False
     save_raw_markdown: bool = False
-    magic: bool = False  # Magic mode for better extraction
+    magic: bool = False  # Magic mode for anti-bot detection
+    
+    # Content selection options
     word_count_threshold: int = 0
-    excluded_tags: List[str] = []
+    excluded_tags: List[str] = ["script", "style", "svg", "noscript"]
+    process_iframes: bool = False  # Merge iframe content into the final output
 
 def is_meaningful_content(content: str, min_length: int = 50, is_deep_crawl: bool = False) -> bool:
     """
-    Check if the content is meaningful (not empty, not just whitespace)
+    Check if the content is meaningful enough to process.
     
     Args:
-        content (str): The content to check
-        min_length (int, optional): Minimum length to consider content meaningful. Defaults to 50.
-        is_deep_crawl (bool, optional): Whether this is checking for deep crawl content. Deep crawl uses lower thresholds.
-    
+        content: The content to check
+        min_length: Minimum length of content to be considered meaningful
+        is_deep_crawl: Whether this is part of a deep crawl
+        
     Returns:
-        bool: True if content is meaningful, False otherwise
+        Whether the content is meaningful
     """
-    # Check if content is None or empty
     if not content:
         return False
     
-    # Remove whitespace and check length
-    stripped_content = content.strip()
+    # For deep crawls, we might want to keep shorter content
+    if is_deep_crawl:
+        min_length = min_length // 2
     
-    # Use lower threshold for deep crawling content
-    effective_min_length = 20 if is_deep_crawl else min_length
-    
-    # Check against minimum length
-    if len(stripped_content) < effective_min_length:
+    # Check length
+    if len(content) < min_length:
         return False
     
-    # Additional checks for meaningfulness can be added here
-    # For example, checking against common placeholder or error texts
-    meaningless_indicators = [
-        'no content available', 
-        'page not found', 
-        '404', 
-        'forbidden', 
-        'access denied'
-    ]
-    
-    # For deep crawl, only check for critical error indicators
-    if is_deep_crawl:
-        meaningless_indicators = ['page not found', '404 not found', 'access denied 403']
-    
-    # Convert to lowercase for case-insensitive check
-    lower_content = stripped_content.lower()
-    
-    # Check if content contains any meaningless indicators
-    if any(indicator in lower_content for indicator in meaningless_indicators):
+    # Check if it's mostly whitespace
+    content_no_whitespace = content.strip()
+    if not content_no_whitespace:
         return False
     
     return True
+
+
+def get_content_from_result(result: Any) -> Optional[str]:
+    """
+    Extract the raw content from a crawler result.
+    
+    Args:
+        result: The result from the crawler
+        
+    Returns:
+        The raw content or None if extraction failed
+    """
+    # Handle CrawlResultContainer
+    if hasattr(result, '_results'):
+        # It's a CrawlResultContainer, try to get markdown from first result
+        if result._results and len(result._results) > 0:
+            first_result = result._results[0]
+            # Try markdown, then raw_markdown, then html
+            if hasattr(first_result, 'markdown'):
+                return first_result.markdown
+            elif hasattr(first_result, 'raw_markdown'):
+                return first_result.raw_markdown
+            elif hasattr(first_result, 'html'):
+                return f"HTML content (no markdown): {len(first_result.html)} chars"
+    
+    # Handle CrawlResult directly
+    if hasattr(result, 'markdown'):
+        return result.markdown
+    elif hasattr(result, 'raw_markdown'):
+        return result.raw_markdown
+    
+    # Try dict-like access patterns
+    try:
+        if isinstance(result, dict) or hasattr(result, 'get'):
+            # Try different attribute names that might contain the content
+            for attr in ['markdown', 'raw_markdown', 'raw_content', 'content']:
+                content = result.get(attr)
+                if content:
+                    return content
+    except (AttributeError, TypeError):
+        pass
+    
+    # Last resort: check if the result itself is a string
+    if isinstance(result, str):
+        return result
+    
+    # Couldn't extract content
+    logger.warning(f"Couldn't extract content from result of type {type(result)}")
+    return None
+
+
+def get_fit_content_from_result(result: Any) -> Optional[str]:
+    """
+    Extract the fit content from a crawler result.
+    
+    Args:
+        result: The result from the crawler
+        
+    Returns:
+        The fit content or None if extraction failed
+    """
+    # Handle CrawlResultContainer
+    if hasattr(result, '_results'):
+        # It's a CrawlResultContainer, try to get fit_markdown from first result
+        if result._results and len(result._results) > 0:
+            first_result = result._results[0]
+            # Try fit_markdown
+            if hasattr(first_result, 'fit_markdown'):
+                return first_result.fit_markdown
+    
+    # Handle CrawlResult directly
+    if hasattr(result, 'fit_markdown'):
+        return result.fit_markdown
+    
+    # Try dict-like access patterns
+    try:
+        if isinstance(result, dict) or hasattr(result, 'get'):
+            # Try different attribute names that might contain the content
+            for attr in ['fit_markdown', 'fit_content']:
+                content = result.get(attr)
+                if content:
+                    return content
+    except (AttributeError, TypeError):
+        pass
+    
+    # No fit content found, return None
+    return None
+
 
 async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
     """
@@ -289,17 +377,26 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
             )
             logger.info(f"Using BFS deep crawl strategy with max_depth={config.max_depth}, max_pages={config.max_pages}")
     
-    # Map string cache modes to CacheMode enum values
+    # Map string cache modes to CacheMode enum values - make case insensitive
     cache_mode_map = {
         "ENABLED": CacheMode.ENABLED,
         "DISABLED": CacheMode.DISABLED,
         "BYPASS": CacheMode.BYPASS,
         "READ_ONLY": CacheMode.READ_ONLY,
-        "WRITE_ONLY": CacheMode.WRITE_ONLY
+        "WRITE_ONLY": CacheMode.WRITE_ONLY,
+        # Add lowercase variants for robustness
+        "enabled": CacheMode.ENABLED,
+        "disabled": CacheMode.DISABLED,
+        "bypass": CacheMode.BYPASS,
+        "read_only": CacheMode.READ_ONLY,
+        "write_only": CacheMode.WRITE_ONLY
     }
     
     # Get the appropriate CacheMode enum value, defaulting to ENABLED
-    cache_mode_enum = cache_mode_map.get(config.cache_mode, CacheMode.ENABLED)
+    # Use uppercase version of the string to match the map keys
+    cache_mode_enum = cache_mode_map.get(config.cache_mode.upper(), CacheMode.ENABLED)
+    if config.cache_mode not in cache_mode_map:
+        logger.warning(f"Unrecognized cache mode '{config.cache_mode}', using ENABLED instead")
     
     # Setup the crawler run configuration
     crawler_run_config = CrawlerRunConfig(
@@ -309,12 +406,31 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         deep_crawl_strategy=deep_crawl_strategy,
         scraping_strategy=LXMLWebScrapingStrategy(),
         stream=False,  # Use non-streaming mode for deep crawling to avoid context variable errors
+        
+        # Basic interaction parameters
+        js_code=config.js_code,
         wait_for=config.wait_for,
         delay_before_return_html=config.delay_before_return_html,
+        page_timeout=config.page_timeout,
+        
+        # Advanced interaction parameters
+        magic=config.magic,
+        remove_overlay_elements=config.remove_overlay_elements,
+        process_iframes=config.process_iframes,
+        simulate_user=config.simulate_user,
+        override_navigator=config.override_navigator,
+        
+        # Content selection options
         word_count_threshold=config.word_count_threshold,
         excluded_tags=config.excluded_tags,
-        magic=config.magic,
-        remove_overlay_elements=config.remove_overlay_elements
+        
+        # Session parameters for multi-step interaction
+        js_only=config.js_only if not config.multi_step_enabled else False,  # Only use in first step if multi-step enabled
+        session_id=None if not config.multi_step_enabled else config.session_id,
+        
+        # Multi-URL batch processing parameters
+        mean_delay=config.mean_delay,
+        max_range=config.max_range
     )
     
     # Set content filter if needed - set it as an attribute after initialization
@@ -471,7 +587,69 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                         logger.warning("No pages retrieved from deep crawl")
                 
                 except Exception as e:
-                    logger.error(f"Error during deep crawl: {e}")
+                    logger.error(f"Error during deep crawl: {str(e)}")
+                    result["error"] = f"Deep crawl error: {str(e)}"
+            elif config.multi_step_enabled and config.multi_step_js_actions:
+                # Handle multi-step interaction
+                logger.info(f"Starting multi-step interaction with {config.url}...")
+                
+                # First step - initial page load
+                crawl_result = await crawler.arun(config.url, crawler_run_config)
+                
+                # Process the initial result
+                if crawl_result:
+                    raw_content = get_content_from_result(crawl_result)
+                    result["raw_content"] = raw_content if raw_content else ""
+                    result["fit_content"] = get_fit_content_from_result(crawl_result) or ""
+                    
+                    # Execute subsequent steps
+                    for step_idx in range(len(config.multi_step_js_actions)):
+                        if step_idx < len(config.multi_step_js_actions) and config.multi_step_js_actions[step_idx]:
+                            logger.info(f"Executing step {step_idx + 1} of multi-step interaction...")
+                            
+                            # Get the JS action, wait condition, and delay for this step
+                            js_action = config.multi_step_js_actions[step_idx]
+                            wait_condition = config.multi_step_wait_conditions[step_idx] if step_idx < len(config.multi_step_wait_conditions) else None
+                            delay = config.multi_step_delays[step_idx] if step_idx < len(config.multi_step_delays) else 0
+                            
+                            # Create step-specific config
+                            step_config = crawler_run_config.clone(
+                                js_code=js_action,
+                                wait_for=wait_condition if wait_condition else None,
+                                delay_before_return_html=delay,
+                                js_only=True,  # Always JS-only for subsequent steps
+                                session_id=config.session_id  # Keep using the same session
+                            )
+                            
+                            # Execute the step
+                            step_result = await crawler.arun(config.url, step_config)
+                            
+                            # Update the result with the new content
+                            if step_result:
+                                new_raw_content = get_content_from_result(step_result)
+                                if new_raw_content:
+                                    result["raw_content"] = new_raw_content
+                                    result["fit_content"] = get_fit_content_from_result(step_result) or ""
+                                    
+                                    # Log success
+                                    logger.info(f"Step {step_idx + 1} completed successfully, content length: {len(new_raw_content)}")
+                                else:
+                                    logger.warning(f"Step {step_idx + 1} did not produce new content")
+                            else:
+                                logger.warning(f"Step {step_idx + 1} failed")
+                    
+                    # Finally, clean up the session if needed
+                    if config.session_id:
+                        logger.info(f"Cleaning up browser session {config.session_id}")
+                        try:
+                            await crawler.crawler_strategy.kill_session(config.session_id)
+                        except Exception as e:
+                            logger.warning(f"Error cleaning up session: {str(e)}")
+                    
+                    # Set success status if we got this far
+                    result["status"] = "success"
+                else:
+                    result["error"] = "Failed to execute initial page load in multi-step interaction"
             else:
                 # Single page crawl
                 crawler_result = await crawler.arun(config.url, crawler_run_config)

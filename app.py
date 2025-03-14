@@ -158,6 +158,74 @@ with st.sidebar:
             max_pages = st.slider("Maximum Pages", 1, 100, 10)
             follow_external_links = st.checkbox("Follow External Links", value=False)
     
+    with st.expander("📱 Page Interaction", expanded=False):
+        st.markdown("### Basic Interaction")
+        js_code = st.text_area("Custom JavaScript (runs before extraction)", 
+                            help="JavaScript code to execute on the page, like clicking buttons or scrolling")
+        wait_for = st.text_input("Wait for Element/Condition", 
+                               help="CSS selector (prefix with 'css:') or JS condition (prefix with 'js:') to wait for")
+        delay_before_return_html = st.slider("Delay Before Return HTML (seconds)", 0, 30, 0,
+                                          help="Wait this many seconds after page load/JS execution before capturing HTML")
+        page_timeout = st.number_input("Page Timeout (milliseconds)", min_value=5000, max_value=300000, value=60000, step=5000,
+                                     help="Maximum time to wait for page to load")
+        
+        st.markdown("### Multi-Step Interaction")
+        multi_step_enabled = st.checkbox("Enable Multi-Step Interaction", value=False,
+                                      help="Perform a sequence of interactions with the page")
+        
+        if multi_step_enabled:
+            session_id = st.text_input("Session ID", value="session1",
+                                    help="Identifier for the browser session to reuse across steps")
+            js_only = st.checkbox("JS Only Mode", value=True,
+                               help="Just run JavaScript in existing page without re-navigation")
+            
+            st.markdown("#### Step Configuration")
+            num_steps = st.number_input("Number of Steps", min_value=1, max_value=10, value=2)
+            
+            multi_step_js_actions = []
+            multi_step_wait_conditions = []
+            multi_step_delays = []
+            
+            for i in range(num_steps):
+                st.markdown(f"##### Step {i+1}")
+                cols = st.columns(3)
+                with cols[0]:
+                    action = st.text_area(f"JS Action {i+1}", height=100, 
+                                     placeholder="e.g., document.querySelector('button.load-more').click();",
+                                     key=f"action_{i}")
+                    multi_step_js_actions.append(action)
+                
+                with cols[1]:
+                    condition = st.text_input(f"Wait Condition {i+1}", 
+                                          placeholder="e.g., css:.new-content or js:()=>document.querySelectorAll('.item').length>20",
+                                          key=f"condition_{i}")
+                    multi_step_wait_conditions.append(condition)
+                
+                with cols[2]:
+                    delay = st.number_input(f"Delay (s) {i+1}", min_value=0, max_value=30, value=1, key=f"delay_{i}")
+                    multi_step_delays.append(delay)
+        
+        st.markdown("### Advanced Interaction")
+        simulate_user = st.checkbox("Simulate User", value=False, 
+                                 help="Simulate human-like behavior to avoid bot detection")
+        override_navigator = st.checkbox("Override Navigator", value=False,
+                                      help="Override navigator properties to avoid bot detection")
+        process_iframes = st.checkbox("Process Iframes", value=False,
+                                   help="Extract content from iframes embedded in the page")
+        
+        # Move Multi-URL Crawling Settings out of the expander
+        magic = st.checkbox("Magic Mode", value=False, 
+                         help="Enable advanced anti-bot detection features")
+        remove_overlay_elements = st.checkbox("Remove Overlay Elements", value=False,
+                                           help="Automatically remove modals and overlays")
+    
+    # Multi-URL Crawling Settings as a separate section
+    with st.expander("🔄 Multi-URL Crawling Settings", expanded=False):
+        mean_delay = st.slider("Mean Delay Between Requests (seconds)", 0.1, 10.0, 1.0, 0.1,
+                            help="Average delay between requests in multi-URL crawling")
+        max_range = st.slider("Max Delay Variance (seconds)", 0.0, 5.0, 0.5, 0.1,
+                           help="Maximum random variance added to delay between requests")
+    
     with st.expander("🔧 Advanced Settings", expanded=False):
         extraction_strategy = st.selectbox("Extraction Strategy", ["Basic", "LLM", "JSON CSS"], index=0)
         
@@ -166,16 +234,15 @@ with st.sidebar:
         elif extraction_strategy == "JSON CSS":
             css_selector = st.text_area("CSS Selectors (JSON)", value='{"title": "h1", "content": "main"}')
         
-        js_code = st.text_area("Custom JavaScript (runs before extraction)")
-        delay_before_return_html = st.slider("Delay Before Return HTML (seconds)", 0, 30, 0)
-        wait_for = st.text_input("Wait for Element (CSS selector or XPath)")
-        
-        magic = st.checkbox("Magic Mode", value=False, help="Try different techniques to extract content")
-        remove_overlay_elements = st.checkbox("Remove Overlay Elements", value=False)
         save_raw_markdown = st.checkbox("Save Raw Markdown to File", value=False)
         
-        word_count_threshold = st.number_input("Word Count Threshold", 0, 1000, 0)
-        excluded_tags = st.multiselect("Excluded Tags", ["script", "style", "svg", "path", "noscript"], default=["script", "style", "svg", "noscript"])
+        st.markdown("### Content Selection Options")
+        word_count_threshold = st.number_input("Word Count Threshold", 0, 1000, 0,
+                                           help="Minimum words per block to include in output")
+        excluded_tags = st.multiselect("Excluded Tags", 
+                                    ["script", "style", "svg", "path", "noscript", "header", "footer", "nav", "form"], 
+                                    default=["script", "style", "svg", "noscript"],
+                                    help="HTML tags to exclude from extraction")
 
 # Main content area with crawl button
 crawl_button = st.button("🕸️ Start Crawling")
@@ -216,12 +283,30 @@ if crawl_button:
             max_pages=max_pages if deep_crawl else 10,
             follow_external_links=follow_external_links if deep_crawl else False,
             
+            # Page Interaction settings
+            js_code=js_code,
+            wait_for=wait_for,
+            delay_before_return_html=delay_before_return_html,
+            page_timeout=page_timeout,
+            
+            # Multi-step interaction settings
+            multi_step_enabled=multi_step_enabled if 'multi_step_enabled' in locals() else False,
+            session_id=session_id if 'session_id' in locals() and multi_step_enabled else None,
+            js_only=js_only if 'js_only' in locals() and multi_step_enabled else False,
+            multi_step_js_actions=multi_step_js_actions if 'multi_step_js_actions' in locals() and multi_step_enabled else [],
+            multi_step_wait_conditions=multi_step_wait_conditions if 'multi_step_wait_conditions' in locals() and multi_step_enabled else [],
+            multi_step_delays=multi_step_delays if 'multi_step_delays' in locals() and multi_step_enabled else [],
+            
+            # Advanced interaction settings
+            simulate_user=simulate_user if 'simulate_user' in locals() else False,
+            override_navigator=override_navigator if 'override_navigator' in locals() else False,
+            process_iframes=process_iframes if 'process_iframes' in locals() else False,
+            mean_delay=mean_delay if 'mean_delay' in locals() else 1.0,
+            max_range=max_range if 'max_range' in locals() else 0.5,
+            
             # Advanced settings
             extraction_strategy=extraction_strategy,
             css_selector=css_selector if extraction_strategy == "JSON CSS" else "",
-            js_code=js_code,
-            delay_before_return_html=delay_before_return_html,
-            wait_for=wait_for,
             magic=magic,
             remove_overlay_elements=remove_overlay_elements,
             save_raw_markdown=save_raw_markdown,
