@@ -245,8 +245,24 @@ if start_button and url:
         if result:
             # Check if result is a dictionary with a success flag
             if isinstance(result, dict) and result.get('success', False):
+                # Store crawl statistics in session state if available
+                if 'crawl_stats' in result:
+                    st.session_state.crawl_stats = result['crawl_stats']
+                
                 # Create result display sections
                 st.markdown("## 📄 Crawl Results")
+                
+                # Add a Statistics section for deep crawling
+                if "crawl_stats" in st.session_state and st.session_state.crawl_stats:
+                    with st.expander("📊 Crawl Statistics", expanded=True):
+                        stats = st.session_state.crawl_stats
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Total Pages Crawled", stats.get("total_pages", 0))
+                            st.metric("Valid Pages Processed", stats.get("valid_pages", 0))
+                        with col2:
+                            st.metric("Pages Filtered Out", stats.get("filtered_pages", 0))
+                            st.metric("Max Depth Reached", stats.get("max_depth_reached", 0))
                 
                 # Metadata Section
                 with st.expander("📋 Metadata", expanded=True):

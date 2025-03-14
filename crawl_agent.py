@@ -62,13 +62,14 @@ class CrawlConfig(BaseModel):
     # Custom JavaScript
     js_code: Optional[str] = None
 
-def is_meaningful_content(content: str, min_length: int = 50) -> bool:
+def is_meaningful_content(content: str, min_length: int = 50, is_deep_crawl: bool = False) -> bool:
     """
     Check if the content is meaningful (not empty, not just whitespace)
     
     Args:
         content (str): The content to check
         min_length (int, optional): Minimum length to consider content meaningful. Defaults to 50.
+        is_deep_crawl (bool, optional): Whether this is checking for deep crawl content. Deep crawl uses lower thresholds.
     
     Returns:
         bool: True if content is meaningful, False otherwise
@@ -80,8 +81,11 @@ def is_meaningful_content(content: str, min_length: int = 50) -> bool:
     # Remove whitespace and check length
     stripped_content = content.strip()
     
+    # Use lower threshold for deep crawling content
+    effective_min_length = 20 if is_deep_crawl else min_length
+    
     # Check against minimum length
-    if len(stripped_content) < min_length:
+    if len(stripped_content) < effective_min_length:
         return False
     
     # Additional checks for meaningfulness can be added here
@@ -89,10 +93,14 @@ def is_meaningful_content(content: str, min_length: int = 50) -> bool:
     meaningless_indicators = [
         'no content available', 
         'page not found', 
-        'error', 
+        '404', 
         'forbidden', 
         'access denied'
     ]
+    
+    # For deep crawl, only check for critical error indicators
+    if is_deep_crawl:
+        meaningless_indicators = ['page not found', '404 not found', 'access denied 403']
     
     # Convert to lowercase for case-insensitive check
     lower_content = stripped_content.lower()
@@ -267,10 +275,21 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                         logger.warning(f"Limiting results to {config.max_pages} pages (got {len(results)})")
                         results = results[:config.max_pages]
                     
-                    # Filter out error pages from results
+                    # Track crawl statistics
+                    total_pages = len(results)
+                    filtered_pages = 0
+                    max_depth_reached = 0
+                    
+                    # Update max depth reached
+                    for r in results:
+                        if hasattr(r, 'metadata') and 'depth' in r.metadata:
+                            depth = r.metadata.get('depth', 0)
+                            max_depth_reached = max(max_depth_reached, depth)
+                    
+                    # Only filter out pages with HTTP errors, keep all content pages even if small
                     valid_results = []
                     for r in results:
-                        # Check for common error indicators in content or status
+                        # Check only for HTTP error status, not content length
                         is_error = False
                         
                         # Check for HTTP error status in metadata if available
@@ -278,31 +297,43 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                             status = r.metadata.get('status')
                             if isinstance(status, int) and status >= 400:  # HTTP error codes
                                 is_error = True
-                                logger.warning(f"Filtering out page with error status {status}: {r.url}")
+                                logger.warning(f"Filtering out page with HTTP error status {status}: {r.url}")
                         
-                        # Check content for error indicators or empty content
-                        if hasattr(r, 'markdown') and hasattr(r.markdown, 'raw_markdown'):
-                            # Use the new is_meaningful_content function
-                            if not is_meaningful_content(r.markdown.raw_markdown):
-                                is_error = True
-                                logger.warning(f"Filtering out page with minimal or meaningless content: {r.url}")
-                        else:
-                            # Pages without markdown are also considered errors
-                            is_error = True
-                            logger.warning(f"Filtering out page with no markdown content: {r.url}")
-                            
-                        # Only keep non-error pages
+                        # Ensure the page has some markdown structure
+                        if not hasattr(r, 'markdown') or not r.markdown:
+                            # Create empty markdown structure if needed
+                            from crawl4ai.models import Markdown
+                            r.markdown = Markdown(
+                                raw_markdown=f"# {r.url}\n\n*This page was crawled but returned no content.*",
+                                fit_markdown=f"# {r.url}\n\n*This page was crawled but returned no content.*"
+                            )
+                            logger.warning(f"Adding placeholder content for page with no markdown: {r.url}")
+                        
+                        # Include all pages except those with HTTP errors
                         if not is_error:
                             valid_results.append(r)
-    
-                    if len(valid_results) < len(results):
-                        logger.info(f"Filtered out {len(results) - len(valid_results)} error or empty pages. Processing {len(valid_results)} valid pages.")
+                        else:
+                            # Even for error pages, include them with a note
+                            if hasattr(r, 'markdown'):
+                                r.markdown.raw_markdown = f"# {r.url}\n\n*This page returned an HTTP error status {status}.*"
+                                r.markdown.fit_markdown = r.markdown.raw_markdown
+                                valid_results.append(r)
+                                logger.info(f"Including error page with note: {r.url}")
+                    
+                    # Track filtering statistics
+                    filtered_pages = total_pages - len(valid_results)
+                    if filtered_pages > 0:
+                        logger.info(f"Filtered out {filtered_pages} error pages. Processing {len(valid_results)} valid pages.")
+                    
+                    # Use the original list if no pages were filtered
+                    if len(valid_results) > 0:
                         results = valid_results
-                        
-                    if not results:
+                    
+                    # Abort if all pages were filtered
+                    if len(results) == 0:
                         logger.error("No valid pages found after filtering. Try adjusting your filters or crawling a different URL.")
                         return {"error": "No valid pages found after filtering"}
-                    
+                        
                     # Initialize collections for aggregating data
                     total_links = set()
                     total_images = set()
@@ -331,16 +362,21 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                         page_separator = f"{'='*80}\n\n"
                         
                         # Get raw content with better handling of empty content
-                        if hasattr(r, 'markdown') and r.markdown and hasattr(r.markdown, 'raw_markdown') and r.markdown.raw_markdown and len(r.markdown.raw_markdown.strip()) > 0:
-                            page_content = r.markdown.raw_markdown
-                            logger.info(f"Found raw markdown for page {i}: {len(page_content)} chars")
+                        if hasattr(r, 'markdown') and r.markdown and hasattr(r.markdown, 'raw_markdown') and r.markdown.raw_markdown:
+                            page_content = r.markdown.raw_markdown.strip()
+                            if page_content:
+                                logger.info(f"Found raw markdown for page {i}: {len(page_content)} chars")
+                            else:
+                                page_content = f"*This page ({r.url}) was crawled but returned empty content.*"
                         else:
-                            # Instead of "[No content available]", provide more context
-                            page_content = f"*This page was crawled but no meaningful content could be extracted.*\n\n*URL: {r.url}*"
+                            # Provide more context for pages without content
+                            page_content = f"*This page ({r.url}) was crawled but no content could be extracted.*"
                         
                         # Get fit content with similar improvements
-                        if hasattr(r, 'markdown') and r.markdown and hasattr(r.markdown, 'fit_markdown') and r.markdown.fit_markdown and len(r.markdown.fit_markdown.strip()) > 0:
-                            page_fit_content = r.markdown.fit_markdown
+                        if hasattr(r, 'markdown') and r.markdown and hasattr(r.markdown, 'fit_markdown') and r.markdown.fit_markdown:
+                            page_fit_content = r.markdown.fit_markdown.strip()
+                            if not page_fit_content:
+                                page_fit_content = page_content
                         else:
                             # Use raw content if fit content is not available
                             page_fit_content = page_content
@@ -369,20 +405,13 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                     logger.info(f"Combined raw markdown length: {len(final_raw)}")
                     logger.info(f"Combined fit markdown length: {len(final_fit)}")
                     
-                    # Instead of saving to files, just return the content in the response
-                    timestamp = time.strftime('%Y%m%d_%H%M%S')
-                    raw_content = None
-                    fit_content = None
+                    # Always return the content if we have it, without additional checks
+                    raw_content = final_raw
+                    fit_content = final_fit
                     
-                    if is_meaningful_content(final_raw):
-                        raw_content = final_raw
-                        # Don't save to file, just log
-                        logger.info(f"Generated raw markdown content ({len(raw_content)} chars)")
-                    
-                    if is_meaningful_content(final_fit):
-                        fit_content = final_fit
-                        # Don't save to file, just log
-                        logger.info(f"Generated fit markdown content ({len(fit_content)} chars)")
+                    # Log the generation
+                    logger.info(f"Generated raw markdown content ({len(raw_content)} chars)")
+                    logger.info(f"Generated fit markdown content ({len(fit_content)} chars)")
                     
                     # Create a completely new result object instead of trying to modify the existing one
                     import copy
@@ -407,7 +436,14 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                         "raw_content": raw_content,
                         "fit_content": fit_content,
                         "metadata": combined_result.metadata,
-                        "extracted_content": combined_result.extracted_content if hasattr(combined_result, 'extracted_content') else None
+                        "extracted_content": combined_result.extracted_content if hasattr(combined_result, 'extracted_content') else None,
+                        # Add crawl statistics
+                        "crawl_stats": {
+                            "total_pages": total_pages,
+                            "valid_pages": len(results),
+                            "filtered_pages": filtered_pages,
+                            "max_depth_reached": max_depth_reached
+                        }
                     }
                 except Exception as e:
                     logger.error(f"Error during deep crawling: {str(e)}")
