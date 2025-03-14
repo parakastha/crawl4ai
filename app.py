@@ -23,6 +23,12 @@ st.markdown("""
     font-weight: bold;
     color: #4A4FE8;
 }
+.result-section {
+    background-color: #f8f9fa;
+    border-radius: 5px;
+    padding: 15px;
+    margin-top: 15px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -57,6 +63,7 @@ with st.sidebar:
                 options=["fixed", "auto"],
                 help="Method of applying the threshold")
             bm25_threshold = 1.0  # Default value when not using BM25
+            user_query = None
         else:
             user_query = st.text_input("BM25 Query", 
                 help="Specify keywords to prioritize content")
@@ -175,7 +182,7 @@ if start_button and url:
             content_filter_type=filter_type,
             threshold=threshold,
             threshold_type=threshold_type,
-            user_query=user_query if filter_type == "BM25" else None,
+            user_query=user_query,
             bm25_threshold=bm25_threshold,
             extraction_type=extraction_type,
             llm_provider=llm_provider if extraction_type == "LLM" else None,
@@ -201,15 +208,49 @@ if start_button and url:
                 st.error("Crawl failed")
                 st.json(result)
             else:
-                # Display raw markdown
-                st.markdown("### Raw Markdown")
-                st.code(result.markdown.raw_markdown, language="markdown")
+                # Create result display sections
+                st.markdown("## 📄 Crawl Results")
                 
-                # Display metadata
-                st.markdown("### Metadata")
-                st.json(result.metadata)
+                # Metadata Section
+                with st.expander("📋 Metadata", expanded=True):
+                    st.markdown("""
+                    <div class="result-section">
+                    """, unsafe_allow_html=True)
+                    
+                    # Display key metadata
+                    st.markdown(f"**Title:** {result.metadata.get('title', 'N/A')}")
+                    st.markdown(f"**Description:** {result.metadata.get('description', 'N/A')}")
+                    
+                    # Full metadata JSON
+                    st.json(result.metadata)
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
                 
-                # Display extracted content if available
+                # Raw Markdown Section
+                with st.expander("📝 Raw Markdown", expanded=False):
+                    st.markdown("""
+                    <div class="result-section">
+                    """, unsafe_allow_html=True)
+                    
+                    st.code(result.markdown.raw_markdown, language="markdown")
+                    
+                    # Download button for raw markdown
+                    st.download_button(
+                        label="Download Raw Markdown",
+                        data=result.markdown.raw_markdown,
+                        file_name=f"crawl4ai_raw_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                        mime="text/markdown"
+                    )
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
+                
+                # Extracted Content Section
                 if hasattr(result, 'extracted_content') and result.extracted_content:
-                    st.markdown("### Extracted Content")
-                    st.json(result.extracted_content)
+                    with st.expander("🔍 Extracted Content", expanded=False):
+                        st.markdown("""
+                        <div class="result-section">
+                        """, unsafe_allow_html=True)
+                        
+                        st.json(result.extracted_content)
+                        
+                        st.markdown("</div>", unsafe_allow_html=True)
