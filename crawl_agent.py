@@ -34,6 +34,10 @@ class CrawlConfig(BaseModel):
     proxy_username: Optional[str] = None
     proxy_password: Optional[str] = None
     
+    # SSL Certificate settings
+    ignore_https_errors: bool = False  # Ignore HTTPS errors (invalid certificates)
+    cert_file: Optional[str] = None  # Path to custom certificate file
+    
     # Pruning filter options
     threshold: float = 0.48
     threshold_type: str = "fixed"  # "fixed", "auto"
@@ -70,6 +74,17 @@ class CrawlConfig(BaseModel):
     delay_before_return_html: int = 0  # Delay in seconds after page load
     wait_for: str = ""  # CSS selector or JS expression to wait for (prefix with "css:" or "js:")
     
+    # Lazy Loading options
+    enable_lazy_loading: bool = False  # Automatically scroll and wait for lazy content
+    lazy_load_scroll_step: int = 800  # Pixels to scroll each step 
+    lazy_load_max_scrolls: int = 5  # Maximum number of scroll operations
+    lazy_load_wait_time: int = 1000  # Milliseconds to wait between scrolls
+    
+    # Authentication & Hooks
+    auth_hook_js: str = ""  # Custom JavaScript for authentication
+    pre_request_hook_js: str = ""  # JavaScript to run before page load
+    post_request_hook_js: str = ""  # JavaScript to run after page load but before extraction
+    
     # Advanced interaction options
     simulate_user: bool = False  # Simulate human-like behavior
     override_navigator: bool = False  # Override navigator properties to avoid bot detection
@@ -100,6 +115,18 @@ class CrawlConfig(BaseModel):
     
     # Media filtering options
     exclude_external_images: bool = False  # Don't include images from external domains
+    
+    # File downloading options
+    download_pdf: bool = False  # Download PDF files found during crawling
+    download_images: bool = False  # Download images found during crawling
+    download_docs: bool = False  # Download document files (doc, docx, xls, xlsx, etc.)
+    download_path: str = "./downloads"  # Path to save downloaded files
+    max_file_size_mb: int = 10  # Maximum size for downloaded files in MB
+    
+    # Multi-URL crawling options
+    urls: List[str] = []  # List of URLs to crawl in batch mode
+    crawl_in_parallel: bool = False  # Crawl multiple URLs in parallel
+    max_concurrent_crawls: int = 3  # Maximum number of concurrent crawls
     
     # Additional HTML filtering
     keep_data_attributes: bool = False  # Keep data-* attributes in HTML
@@ -234,13 +261,26 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
     Returns:
         The crawl results
     """
+    # Check if we're in multi-URL mode
+    if config.urls and len(config.urls) > 0:
+        return await crawl_multiple_urls(config)
+        
     logger.info(f"Starting crawl of {config.url}")
     
     # Set up browser configuration
     browser_config = BrowserConfig(
         headless=config.headless,
-        verbose=config.verbose
+        verbose=config.verbose,
+        ignore_https_errors=config.ignore_https_errors
     )
+    
+    # Add SSL certificate settings if provided
+    if config.cert_file:
+        if os.path.exists(config.cert_file):
+            browser_config.cert_file = config.cert_file
+            logger.info(f"Using custom SSL certificate: {config.cert_file}")
+        else:
+            logger.warning(f"Certificate file not found: {config.cert_file}")
     
     # Add proxy configuration if enabled
     if config.use_proxy and config.proxy_server:
@@ -406,11 +446,23 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         "write_only": CacheMode.WRITE_ONLY
     }
     
-    # Get the appropriate CacheMode enum value, defaulting to ENABLED
-    # Use uppercase version of the string to match the map keys
-    cache_mode_enum = cache_mode_map.get(config.cache_mode.upper(), CacheMode.ENABLED)
-    if config.cache_mode not in cache_mode_map:
+    # Check what values are actually in the CacheMode enum
+    valid_cache_modes = [mode.name for mode in CacheMode]
+    logger.info(f"Valid cache modes: {valid_cache_modes}")
+    
+    # Get the appropriate CacheMode enum value
+    if hasattr(CacheMode, config.cache_mode):
+        # Direct enum access if name matches
+        cache_mode_enum = getattr(CacheMode, config.cache_mode)
+        logger.info(f"Using cache mode: {cache_mode_enum}")
+    elif config.cache_mode.upper() in cache_mode_map:
+        # Fallback to our mapping
+        cache_mode_enum = cache_mode_map[config.cache_mode.upper()]
+        logger.info(f"Using mapped cache mode: {cache_mode_enum}")
+    else:
+        # Default to ENABLED
         logger.warning(f"Unrecognized cache mode '{config.cache_mode}', using ENABLED instead")
+        cache_mode_enum = CacheMode.ENABLED
     
     # Setup the crawler run configuration
     crawler_run_config = CrawlerRunConfig(
@@ -461,6 +513,89 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         max_range=config.max_range
     )
     
+    # Apply custom hooks and lazy loading settings via JavaScript if enabled
+    # (since these aren't directly supported by CrawlerRunConfig)
+    if config.pre_request_hook_js:
+        existing_js = crawler_run_config.js_code or ""
+        crawler_run_config.js_code = config.pre_request_hook_js + ";\n" + existing_js
+    
+    if config.post_request_hook_js:
+        existing_js = crawler_run_config.js_code or ""
+        crawler_run_config.js_code = existing_js + ";\n" + config.post_request_hook_js
+    
+    if config.auth_hook_js:
+        existing_js = crawler_run_config.js_code or ""
+        crawler_run_config.js_code = config.auth_hook_js + ";\n" + existing_js
+    
+    # Implement lazy loading via JavaScript if enabled
+    if config.enable_lazy_loading:
+        lazy_loading_js = f"""
+        // Auto-scroll for lazy loading
+        async function autoScroll() {{
+            for (let i = 0; i < {config.lazy_load_max_scrolls}; i++) {{
+                window.scrollBy(0, {config.lazy_load_scroll_step});
+                // Wait for content to load
+                await new Promise(resolve => setTimeout(resolve, {config.lazy_load_wait_time}));
+            }}
+        }}
+        await autoScroll();
+        """
+        existing_js = crawler_run_config.js_code or ""
+        crawler_run_config.js_code = existing_js + ";\n" + lazy_loading_js
+    
+    # Implement file downloading through JavaScript if enabled
+    if config.download_pdf or config.download_images or config.download_docs:
+        # Create a directory for downloads if it doesn't exist
+        os.makedirs(config.download_path, exist_ok=True)
+        
+        # Track downloaded files for the result
+        result["downloaded_files"] = []
+        
+        # Get file URLs based on type
+        download_js = f"""
+        // Get file URLs to download
+        const downloadUrls = [];
+        
+        // Helper function to check file extension
+        function hasExtension(url, extensions) {{
+            const urlLower = url.toLowerCase();
+            return extensions.some(ext => urlLower.endsWith('.' + ext));
+        }}
+        
+        // Collect links based on file type
+        document.querySelectorAll('a[href]').forEach(link => {{
+            const url = link.href;
+            
+            if ({str(config.download_pdf).lower()} && hasExtension(url, ['pdf'])) {{
+                downloadUrls.push({{url: url, type: 'pdf'}});
+            }}
+            
+            if ({str(config.download_images).lower()} && hasExtension(url, ['jpg', 'jpeg', 'png', 'gif', 'webp'])) {{
+                downloadUrls.push({{url: url, type: 'image'}});
+            }}
+            
+            if ({str(config.download_docs).lower()} && hasExtension(url, ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv'])) {{
+                downloadUrls.push({{url: url, type: 'document'}});
+            }}
+        }});
+        
+        // Also check for image tags
+        if ({str(config.download_images).lower()}) {{
+            document.querySelectorAll('img[src]').forEach(img => {{
+                if (img.src && (img.src.startsWith('http://') || img.src.startsWith('https://'))) {{
+                    downloadUrls.push({{url: img.src, type: 'image'}});
+                }}
+            }});
+        }}
+        
+        // Return the URLs to be downloaded separately
+        return JSON.stringify(downloadUrls);
+        """
+        
+        # Store the download JavaScript for later use, but don't add it to crawler_run_config.js_code
+        # because we'll need to handle the downloads manually after the page is crawled
+        setattr(crawler_run_config, '_download_js', download_js)
+    
     # Set content filter if needed - set it as an attribute after initialization
     if content_filter:
         setattr(crawler_run_config, 'content_filter', content_filter)
@@ -474,7 +609,8 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         "fit_content": "",
         "stats": {},
         "ai_enhanced_content": "",
-        "ai_answer": ""
+        "ai_answer": "",
+        "downloaded_files": []
     }
     
     # Execute the crawl
@@ -813,6 +949,162 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
             result["error"] = str(e)
     
     return result
+
+async def crawl_multiple_urls(config: CrawlConfig) -> Dict[str, Any]:
+    """
+    Crawl multiple websites using the provided configuration.
+    
+    Args:
+        config: The crawl configuration with urls list
+        
+    Returns:
+        Combined crawl results
+    """
+    # Ensure we have URLs to crawl
+    if not config.urls:
+        logger.error("No URLs provided for multi-URL crawling")
+        return {
+            "status": "failed",
+            "error": "No URLs provided for multi-URL crawling"
+        }
+    
+    logger.info(f"Starting multi-URL crawl of {len(config.urls)} URLs")
+    
+    # Results container
+    multi_result = {
+        "urls": config.urls.copy(),
+        "crawl_time": time.time(),
+        "status": "success",
+        "results": [],
+        "stats": {
+            "total_urls": len(config.urls),
+            "successful_urls": 0,
+            "failed_urls": 0,
+            "total_content_length": 0,
+            "total_pages_crawled": 0
+        }
+    }
+    
+    if config.crawl_in_parallel and len(config.urls) > 1:
+        # Parallel crawling
+        logger.info(f"Crawling {len(config.urls)} URLs in parallel with max {config.max_concurrent_crawls} concurrent tasks")
+        
+        # Create a semaphore to limit concurrency
+        semaphore = asyncio.Semaphore(config.max_concurrent_crawls)
+        
+        async def crawl_with_semaphore(url):
+            async with semaphore:
+                # Create a copy of the config with the current URL
+                url_config = config.copy()
+                url_config.url = url
+                url_config.urls = []  # Clear the URLs list to avoid recursion
+                
+                # Add random delay between requests
+                if config.mean_delay > 0:
+                    import random
+                    delay = config.mean_delay + random.uniform(-config.max_range, config.max_range)
+                    delay = max(0.1, delay)  # Ensure minimum delay of 0.1s
+                    logger.info(f"Waiting {delay:.1f}s before crawling {url}")
+                    await asyncio.sleep(delay)
+                
+                return await crawl_url(url_config)
+        
+        # Create tasks for all URLs
+        tasks = [crawl_with_semaphore(url) for url in config.urls]
+        
+        # Wait for all tasks to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        for i, result in enumerate(results):
+            url = config.urls[i]
+            
+            if isinstance(result, Exception):
+                logger.error(f"Error crawling {url}: {str(result)}")
+                multi_result["results"].append({
+                    "url": url,
+                    "status": "failed",
+                    "error": str(result)
+                })
+                multi_result["stats"]["failed_urls"] += 1
+            else:
+                multi_result["results"].append(result)
+                
+                if result.get("status") == "success":
+                    multi_result["stats"]["successful_urls"] += 1
+                    multi_result["stats"]["total_content_length"] += len(result.get("raw_content", ""))
+                    
+                    # Add pages crawled if available
+                    if "stats" in result and "pages_crawled" in result["stats"]:
+                        multi_result["stats"]["total_pages_crawled"] += result["stats"]["pages_crawled"]
+                else:
+                    multi_result["stats"]["failed_urls"] += 1
+    else:
+        # Sequential crawling
+        logger.info(f"Crawling {len(config.urls)} URLs sequentially")
+        
+        for url in config.urls:
+            # Create a copy of the config with the current URL
+            url_config = config.copy()
+            url_config.url = url
+            url_config.urls = []  # Clear the URLs list to avoid recursion
+            
+            # Add random delay between requests
+            if config.mean_delay > 0 and multi_result["stats"]["successful_urls"] + multi_result["stats"]["failed_urls"] > 0:
+                import random
+                delay = config.mean_delay + random.uniform(-config.max_range, config.max_range)
+                delay = max(0.1, delay)  # Ensure minimum delay of 0.1s
+                logger.info(f"Waiting {delay:.1f}s before crawling {url}")
+                await asyncio.sleep(delay)
+            
+            try:
+                result = await crawl_url(url_config)
+                multi_result["results"].append(result)
+                
+                if result.get("status") == "success":
+                    multi_result["stats"]["successful_urls"] += 1
+                    multi_result["stats"]["total_content_length"] += len(result.get("raw_content", ""))
+                    
+                    # Add pages crawled if available
+                    if "stats" in result and "pages_crawled" in result["stats"]:
+                        multi_result["stats"]["total_pages_crawled"] += result["stats"]["pages_crawled"]
+                else:
+                    multi_result["stats"]["failed_urls"] += 1
+            except Exception as e:
+                logger.error(f"Error crawling {url}: {str(e)}")
+                multi_result["results"].append({
+                    "url": url,
+                    "status": "failed",
+                    "error": str(e)
+                })
+                multi_result["stats"]["failed_urls"] += 1
+    
+    # Set overall status
+    if multi_result["stats"]["successful_urls"] == 0:
+        multi_result["status"] = "failed"
+    elif multi_result["stats"]["failed_urls"] > 0:
+        multi_result["status"] = "partial"
+    
+    # Create combined content if needed
+    if config.use_ai_agent and config.enhance_content:
+        # Combine all successful raw content
+        combined_raw = ""
+        for result in multi_result["results"]:
+            if result.get("status") == "success" and result.get("raw_content"):
+                combined_raw += f"\n## {result['url']}\n\n{result['raw_content']}\n\n"
+        
+        if combined_raw:
+            multi_result["combined_raw_content"] = combined_raw
+            
+            # Try to enhance the combined content
+            if has_ai_agent:
+                try:
+                    multi_result["combined_enhanced_content"] = await ai_agent.enhance_content(combined_raw)
+                except Exception as e:
+                    logger.error(f"Error enhancing combined content: {str(e)}")
+    
+    logger.info(f"Multi-URL crawl complete. Successful: {multi_result['stats']['successful_urls']}, Failed: {multi_result['stats']['failed_urls']}")
+    return multi_result
 
 def parse_args():
     """Parse command line arguments."""

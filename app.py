@@ -49,6 +49,10 @@ with st.expander("✨ Features", expanded=False):
             "description": "Connect through proxy servers to access geo-restricted content or avoid IP blocking. Supports authentication for private proxies."
         },
         {
+            "title": "SSL Certificate Options",
+            "description": "Ignore HTTPS errors or provide custom certificate files for secure connections."
+        },
+        {
             "title": "Content Filtering",
             "description": "Filter content using Pruning or BM25 algorithms with adjustable thresholds."
         },
@@ -67,6 +71,22 @@ with st.expander("✨ Features", expanded=False):
         {
             "title": "JavaScript Execution",
             "description": "Run custom JavaScript on the page before extraction."
+        },
+        {
+            "title": "Lazy Loading Support",
+            "description": "Automatically scroll and wait for content that loads dynamically as you scroll."
+        },
+        {
+            "title": "File Downloading",
+            "description": "Download PDFs, images, and documents found during crawling with size limits and filtering."
+        },
+        {
+            "title": "Multi-URL Crawling",
+            "description": "Crawl multiple URLs in batch mode, with parallel processing and configurable delays."
+        },
+        {
+            "title": "Authentication & Hooks",
+            "description": "Execute custom JavaScript at different stages to handle logins and other custom interactions."
         },
         {
             "title": "Statistics & Analysis",
@@ -98,7 +118,15 @@ with st.sidebar:
         cache_mode_options = ["ENABLED", "BYPASS", "DISABLED", "READ_ONLY", "WRITE_ONLY"]
         cache_mode = st.selectbox("Cache Mode", cache_mode_options, index=0)
         
+        # SSL certificate settings
+        st.markdown("### SSL Certificate Settings")
+        ignore_https_errors = st.checkbox("Ignore HTTPS Errors", value=False, 
+                                       help="Ignore HTTPS errors like invalid certificates")
+        cert_file = st.text_input("Custom Certificate File Path", value="",
+                               help="Path to custom certificate file (leave empty for default)")
+        
         # Proxy settings
+        st.markdown("### Proxy Settings")
         use_proxy = st.checkbox("Use Proxy", value=False)
         proxy_server = None
         proxy_username = None
@@ -169,6 +197,36 @@ with st.sidebar:
         page_timeout = st.number_input("Page Timeout (milliseconds)", min_value=5000, max_value=300000, value=60000, step=5000,
                                      help="Maximum time to wait for page to load")
         
+        st.markdown("### Lazy Loading")
+        enable_lazy_loading = st.checkbox("Enable Lazy Loading", value=False,
+                                       help="Automatically scroll and wait for lazy-loaded content")
+        if enable_lazy_loading:
+            lazy_load_cols = st.columns(3)
+            with lazy_load_cols[0]:
+                lazy_load_scroll_step = st.number_input("Scroll Step (pixels)", value=800, min_value=100, max_value=5000,
+                                                     help="Pixels to scroll each step")
+            with lazy_load_cols[1]:
+                lazy_load_max_scrolls = st.number_input("Max Scrolls", value=5, min_value=1, max_value=50,
+                                                     help="Maximum number of scroll operations")
+            with lazy_load_cols[2]:
+                lazy_load_wait_time = st.number_input("Wait Time (ms)", value=1000, min_value=100, max_value=10000,
+                                                   help="Milliseconds to wait between scrolls")
+            
+            st.info("Lazy loading is useful for pages that load content as you scroll. " +
+                   "The crawler will perform multiple scrolls with waits in between to allow content to load.")
+        
+        st.markdown("### Authentication & Hooks")
+        auth_hook_js = st.text_area("Authentication Hook JS", "",
+                                 help="JavaScript to handle authentication on the page")
+        pre_request_hook_js = st.text_area("Pre-Request Hook JS", "",
+                                        help="JavaScript to run before page navigation")
+        post_request_hook_js = st.text_area("Post-Request Hook JS", "",
+                                         help="JavaScript to run after page loads but before extraction")
+        
+        if auth_hook_js or pre_request_hook_js or post_request_hook_js:
+            st.info("Hooks allow you to execute custom JavaScript at different stages of the crawling process. " +
+                   "The Authentication Hook is specifically for handling logins and other authentication flows.")
+        
         st.markdown("### Multi-Step Interaction")
         multi_step_enabled = st.checkbox("Enable Multi-Step Interaction", value=False,
                                       help="Perform a sequence of interactions with the page")
@@ -219,13 +277,38 @@ with st.sidebar:
         remove_overlay_elements = st.checkbox("Remove Overlay Elements", value=False,
                                            help="Automatically remove modals and overlays")
     
-    # Multi-URL Crawling Settings as a separate section
-    with st.expander("🔄 Multi-URL Crawling Settings", expanded=False):
-        mean_delay = st.slider("Mean Delay Between Requests (seconds)", 0.1, 10.0, 1.0, 0.1,
-                            help="Average delay between requests in multi-URL crawling")
-        max_range = st.slider("Max Delay Variance (seconds)", 0.0, 5.0, 0.5, 0.1,
-                           help="Maximum random variance added to delay between requests")
-    
+    # Multi-URL Crawling Settings as a separate section outside any other expander
+    with st.expander("🔄 Multi-URL Crawling", expanded=False):
+        st.markdown("### Batch Crawling")
+        urls_text = st.text_area("URLs to Crawl (one per line)", "",
+                              help="Enter multiple URLs to crawl in batch (leave empty to use the single URL field)")
+        
+        # Extract URLs from the text area
+        urls = [url.strip() for url in urls_text.split("\n") if url.strip()]
+        
+        if urls:
+            st.success(f"Configured {len(urls)} URLs for batch crawling")
+            
+            crawl_in_parallel = st.checkbox("Crawl in Parallel", value=True,
+                                        help="Process multiple URLs concurrently (faster)")
+            
+            if crawl_in_parallel:
+                max_concurrent_crawls = st.slider("Max Concurrent Crawls", 1, 10, 3,
+                                              help="Maximum number of URLs to process simultaneously")
+            
+            st.markdown("### Delay Settings")
+            mean_delay = st.slider("Mean Delay Between Requests (seconds)", 0.1, 10.0, 1.0, 0.1,
+                               help="Average delay between requests in multi-URL crawling")
+            max_range = st.slider("Max Delay Variance (seconds)", 0.0, 5.0, 0.5, 0.1,
+                              help="Maximum random variance added to delay between requests")
+            
+            st.info("Adding random delays between requests helps avoid getting blocked by websites. " +
+                   f"Actual delay will be between {max(0.1, mean_delay-max_range):.1f}s and {mean_delay+max_range:.1f}s.")
+        else:
+            st.info("Enter multiple URLs above to enable batch crawling. Leave empty to use the single URL field.")
+            mean_delay = 1.0
+            max_range = 0.5
+
     with st.expander("🔧 Advanced Settings", expanded=False):
         extraction_strategy = st.selectbox("Extraction Strategy", ["Basic", "LLM", "JSON CSS"], index=0)
         
@@ -278,6 +361,24 @@ with st.sidebar:
                                       help="Specific HTML attributes to keep in the output")
             keep_attrs = [attr.strip() for attr in keep_attrs_text.split("\n") if attr.strip()]
 
+    with st.expander("📄 File Downloading", expanded=False):
+        st.markdown("### File Download Settings")
+        download_pdf = st.checkbox("Download PDF Files", value=False,
+                               help="Download PDF files found during crawling")
+        download_images = st.checkbox("Download Images", value=False,
+                                  help="Download images found during crawling")
+        download_docs = st.checkbox("Download Documents", value=False,
+                                help="Download document files (doc, docx, xls, xlsx, etc.)")
+        
+        if download_pdf or download_images or download_docs:
+            download_path = st.text_input("Download Path", value="./downloads",
+                                      help="Directory where downloaded files will be saved")
+            max_file_size_mb = st.slider("Maximum File Size (MB)", 1, 100, 10,
+                                      help="Maximum size for downloaded files in megabytes")
+            
+            st.info("Files will be saved to the specified folder with their original filenames. " +
+                   "The crawler will skip files larger than the maximum size.")
+
 # Main content area with crawl button
 crawl_button = st.button("🕸️ Start Crawling")
 
@@ -290,6 +391,10 @@ if crawl_button:
             verbose=verbose,
             cache_mode=cache_mode,
             content_filter_type=filter_type,
+            
+            # SSL certificate settings
+            ignore_https_errors=ignore_https_errors,
+            cert_file=cert_file if cert_file else None,
             
             # Proxy settings
             use_proxy=use_proxy,
@@ -323,6 +428,17 @@ if crawl_button:
             delay_before_return_html=delay_before_return_html,
             page_timeout=page_timeout,
             
+            # Lazy loading settings
+            enable_lazy_loading=enable_lazy_loading if 'enable_lazy_loading' in locals() else False,
+            lazy_load_scroll_step=lazy_load_scroll_step if 'lazy_load_scroll_step' in locals() and enable_lazy_loading else 800,
+            lazy_load_max_scrolls=lazy_load_max_scrolls if 'lazy_load_max_scrolls' in locals() and enable_lazy_loading else 5,
+            lazy_load_wait_time=lazy_load_wait_time if 'lazy_load_wait_time' in locals() and enable_lazy_loading else 1000,
+            
+            # Authentication & hooks
+            auth_hook_js=auth_hook_js if 'auth_hook_js' in locals() else "",
+            pre_request_hook_js=pre_request_hook_js if 'pre_request_hook_js' in locals() else "",
+            post_request_hook_js=post_request_hook_js if 'post_request_hook_js' in locals() else "",
+            
             # Multi-step interaction settings
             multi_step_enabled=multi_step_enabled if 'multi_step_enabled' in locals() else False,
             session_id=session_id if 'session_id' in locals() and multi_step_enabled else None,
@@ -335,8 +451,20 @@ if crawl_button:
             simulate_user=simulate_user if 'simulate_user' in locals() else False,
             override_navigator=override_navigator if 'override_navigator' in locals() else False,
             process_iframes=process_iframes if 'process_iframes' in locals() else False,
+            
+            # Multi-URL crawling settings
+            urls=urls if 'urls' in locals() and urls else [],
+            crawl_in_parallel=crawl_in_parallel if 'crawl_in_parallel' in locals() and 'urls' in locals() and urls else False,
+            max_concurrent_crawls=max_concurrent_crawls if 'max_concurrent_crawls' in locals() and 'crawl_in_parallel' in locals() and crawl_in_parallel else 3,
             mean_delay=mean_delay if 'mean_delay' in locals() else 1.0,
             max_range=max_range if 'max_range' in locals() else 0.5,
+            
+            # File downloading settings
+            download_pdf=download_pdf if 'download_pdf' in locals() else False,
+            download_images=download_images if 'download_images' in locals() else False,
+            download_docs=download_docs if 'download_docs' in locals() else False,
+            download_path=download_path if 'download_path' in locals() and ('download_pdf' in locals() or 'download_images' in locals() or 'download_docs' in locals()) else "./downloads",
+            max_file_size_mb=max_file_size_mb if 'max_file_size_mb' in locals() and ('download_pdf' in locals() or 'download_images' in locals() or 'download_docs' in locals()) else 10,
             
             # Advanced settings
             extraction_strategy=extraction_strategy,
@@ -370,52 +498,111 @@ if crawl_button:
             with tabs[0]:
                 st.success(f"Successfully crawled {url}")
                 
-                # Display stats in a card
-                st.markdown("""
-                <div class="result-section">
-                    <h3>Crawl Results</h3>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Stats about the crawl
-                if "stats" in result:
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Pages Crawled", result["stats"].get("pages_crawled", 1))
-                    with col2:
-                        st.metric("Successful Pages", result["stats"].get("successful_pages", 1))
-                    with col3:
-                        st.metric("Content Length", f"{result['stats'].get('total_content_length', len(result.get('raw_content', '')))/1000:.1f}K chars")
-                
-                # Download buttons for the markdown files
-                if result.get("raw_content"):
-                    col1, col2, col3 = st.columns(3)
+                # Check if it's a multi-URL result
+                if "urls" in result and "results" in result:
+                    # Display multi-URL crawl results
+                    st.markdown("""
+                    <div class="result-section">
+                        <h3>Multi-URL Crawl Results</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
                     
+                    # Stats about the multi-URL crawl
+                    col1, col2, col3 = st.columns(3)
                     with col1:
+                        st.metric("URLs Crawled", result["stats"].get("total_urls", 0))
+                    with col2:
+                        st.metric("Successful URLs", result["stats"].get("successful_urls", 0))
+                    with col3:
+                        st.metric("Failed URLs", result["stats"].get("failed_urls", 0))
+                    
+                    # Overall content stats
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Total Pages Crawled", result["stats"].get("total_pages_crawled", 0))
+                    with col2:
+                        st.metric("Total Content Length", f"{result['stats'].get('total_content_length', 0)/1000:.1f}K chars")
+                    
+                    # URL-specific results
+                    st.markdown("### Results by URL")
+                    
+                    # Create a simple list of URL results without using expanders
+                    for i, url_result in enumerate(result["results"]):
+                        url = url_result.get("url", f"URL {i+1}")
+                        status = url_result.get("status", "unknown")
+                        
+                        # Use color coding for success/failure
+                        if status == "success":
+                            st.success(f"{url} - Success")
+                            # Display basic stats about this URL result if available
+                            if "stats" in url_result:
+                                st.text(f"Content length: {len(url_result.get('raw_content', ''))}")
+                        else:
+                            st.error(f"{url} - Failed: {url_result.get('error', 'Unknown error')}")
+                    
+                    # Download buttons for combined content
+                    if "combined_raw_content" in result:
                         st.download_button(
-                            label="Download Raw Markdown",
-                            data=result["raw_content"],
-                            file_name=f"crawl4ai_raw_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                            label="Download Combined Raw Content",
+                            data=result["combined_raw_content"],
+                            file_name=f"crawl4ai_combined_raw_{time.strftime('%Y%m%d_%H%M%S')}.md",
                             mime="text/markdown"
                         )
                     
-                    with col2:
-                        if result.get("fit_content"):
-                            st.download_button(
-                                label="Download Processed Markdown",
-                                data=result["fit_content"],
-                                file_name=f"crawl4ai_processed_{time.strftime('%Y%m%d_%H%M%S')}.md",
-                                mime="text/markdown"
-                            )
+                    if "combined_enhanced_content" in result:
+                        st.download_button(
+                            label="Download Combined AI-Enhanced Content",
+                            data=result["combined_enhanced_content"],
+                            file_name=f"crawl4ai_combined_enhanced_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                            mime="text/markdown"
+                        )
+                else:
+                    # Display stats in a card for single URL crawl
+                    st.markdown("""
+                    <div class="result-section">
+                        <h3>Crawl Results</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
                     
-                    with col3:
-                        if result.get("ai_enhanced_content"):
+                    # Stats about the crawl
+                    if "stats" in result:
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Pages Crawled", result["stats"].get("pages_crawled", 1))
+                        with col2:
+                            st.metric("Successful Pages", result["stats"].get("successful_pages", 1))
+                        with col3:
+                            st.metric("Content Length", f"{result['stats'].get('total_content_length', len(result.get('raw_content', '')))/1000:.1f}K chars")
+                    
+                    # Download buttons for the markdown files
+                    if result.get("raw_content"):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
                             st.download_button(
-                                label="Download AI Enhanced Content",
-                                data=result["ai_enhanced_content"],
-                                file_name=f"crawl4ai_ai_enhanced_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                                label="Download Raw Markdown",
+                                data=result["raw_content"],
+                                file_name=f"crawl4ai_raw_{time.strftime('%Y%m%d_%H%M%S')}.md",
                                 mime="text/markdown"
                             )
+                        
+                        with col2:
+                            if result.get("fit_content"):
+                                st.download_button(
+                                    label="Download Processed Markdown",
+                                    data=result["fit_content"],
+                                    file_name=f"crawl4ai_processed_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                                    mime="text/markdown"
+                                )
+                        
+                        with col3:
+                            if result.get("ai_enhanced_content"):
+                                st.download_button(
+                                    label="Download AI Enhanced Content",
+                                    data=result["ai_enhanced_content"],
+                                    file_name=f"crawl4ai_ai_enhanced_{time.strftime('%Y%m%d_%H%M%S')}.md",
+                                    mime="text/markdown"
+                                )
             
             # Raw markdown tab
             with tabs[1]:
