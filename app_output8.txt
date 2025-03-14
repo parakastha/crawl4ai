@@ -98,3 +98,6 @@
 [COMPLETE] ● https://docs.crawl4ai.com/... | Status: True | Total: 0.04s
 2025-03-14 07:09:21,755 - crawl_agent - INFO - Generated raw markdown content (8642 chars)
 2025-03-14 07:09:21,759 - crawl_agent - INFO - Found fit content (8681 chars)
+  Stopping...
+Starting Crawl4AI development server with hot reload...
+Killing existing Streamlit process: No processes found.

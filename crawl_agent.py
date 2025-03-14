@@ -860,7 +860,7 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         "status": "success",  # Add success status here
         "content": html_content,
         "markdown": markdown_content,
-        "raw_content": markdown_content,  # Add raw_content for app.py compatibility
+        "raw_content": get_content_from_result(crawl_result),  # Use get_content_from_result to handle deep crawl results
         "fit_content": fit_content,
         "extraction": extraction_result,
         "stats": {
