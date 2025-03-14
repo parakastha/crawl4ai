@@ -223,12 +223,80 @@ def get_content_from_result(result: Any) -> Optional[str]:
     Returns:
         The raw content or None if extraction failed
     """
-    # Handle CrawlResultContainer
+    # Handle list of CrawlResultContainers (deep crawl results)
+    if isinstance(result, list) or (hasattr(result, '__iter__') and hasattr(result, '__len__') and not isinstance(result, (str, dict))):
+        # It's a list-like object with multiple page results
+        if len(result) > 0:
+            combined_content = []
+            
+            for i, page_result_container in enumerate(result):
+                # Check if the page result is a CrawlResultContainer
+                if hasattr(page_result_container, '_results') and len(page_result_container._results) > 0:
+                    # Get the actual page result from the container
+                    page_result = page_result_container._results[0]
+                else:
+                    # Use the container itself as the page result
+                    page_result = page_result_container
+                
+                page_url = getattr(page_result, 'url', f"Page {i+1}")
+                page_content = None
+                
+                # Try markdown, then raw_markdown, then html
+                if hasattr(page_result, 'markdown') and page_result.markdown:
+                    page_content = page_result.markdown
+                elif hasattr(page_result, 'raw_markdown') and page_result.raw_markdown:
+                    page_content = page_result.raw_markdown
+                elif hasattr(page_result, 'html') and page_result.html:
+                    page_content = f"HTML content (no markdown): {len(page_result.html)} chars"
+                
+                if page_content:
+                    # Add page separator with URL
+                    combined_content.append(f"\n\n## Page: {page_url}\n\n{page_content}")
+            
+            if combined_content:
+                return "\n".join(combined_content)
+            
+            # Fallback to first result if no combined content
+            first_container = result[0]
+            if hasattr(first_container, '_results') and len(first_container._results) > 0:
+                first_result = first_container._results[0]
+            else:
+                first_result = first_container
+                
+            if hasattr(first_result, 'markdown'):
+                return first_result.markdown
+            elif hasattr(first_result, 'raw_markdown'):
+                return first_result.raw_markdown
+            elif hasattr(first_result, 'html'):
+                return f"HTML content (no markdown): {len(first_result.html)} chars"
+    
+    # Handle CrawlResultContainer with _results attribute
     if hasattr(result, '_results'):
-        # It's a CrawlResultContainer, try to get markdown from first result
+        # It's a CrawlResultContainer, combine markdown from all results
         if result._results and len(result._results) > 0:
+            combined_content = []
+            
+            for page_result in result._results:
+                page_url = getattr(page_result, 'url', "Unknown URL")
+                page_content = None
+                
+                # Try markdown, then raw_markdown, then html
+                if hasattr(page_result, 'markdown') and page_result.markdown:
+                    page_content = page_result.markdown
+                elif hasattr(page_result, 'raw_markdown') and page_result.raw_markdown:
+                    page_content = page_result.raw_markdown
+                elif hasattr(page_result, 'html') and page_result.html:
+                    page_content = f"HTML content (no markdown): {len(page_result.html)} chars"
+                
+                if page_content:
+                    # Add page separator with URL
+                    combined_content.append(f"\n\n## Page: {page_url}\n\n{page_content}")
+            
+            if combined_content:
+                return "\n".join(combined_content)
+            
+            # Fallback to first result if no combined content
             first_result = result._results[0]
-            # Try markdown, then raw_markdown, then html
             if hasattr(first_result, 'markdown'):
                 return first_result.markdown
             elif hasattr(first_result, 'raw_markdown'):
@@ -272,32 +340,78 @@ def get_fit_content_from_result(result: Any) -> Optional[str]:
     Returns:
         The fit content or None if extraction failed
     """
-    # Handle CrawlResultContainer
+    # Handle list of CrawlResultContainers (deep crawl results)
+    if isinstance(result, list) or (hasattr(result, '__iter__') and hasattr(result, '__len__') and not isinstance(result, (str, dict))):
+        # It's a list-like object with multiple page results
+        if len(result) > 0:
+            combined_content = []
+            
+            for i, page_result_container in enumerate(result):
+                # Check if the page result is a CrawlResultContainer
+                if hasattr(page_result_container, '_results') and len(page_result_container._results) > 0:
+                    # Get the actual page result from the container
+                    page_result = page_result_container._results[0]
+                else:
+                    # Use the container itself as the page result
+                    page_result = page_result_container
+                
+                page_url = getattr(page_result, 'url', f"Page {i+1}")
+                page_content = None
+                
+                # Try fit_markdown, if not available fall back to markdown
+                if hasattr(page_result, 'fit_markdown') and page_result.fit_markdown:
+                    page_content = page_result.fit_markdown
+                elif hasattr(page_result, 'markdown') and page_result.markdown:
+                    page_content = page_result.markdown
+                
+                if page_content:
+                    # Add page separator with URL
+                    combined_content.append(f"\n\n## Page: {page_url}\n\n{page_content}")
+            
+            if combined_content:
+                return "\n".join(combined_content)
+            
+            # Fallback to first result if no combined content
+            first_container = result[0]
+            if hasattr(first_container, '_results') and len(first_container._results) > 0:
+                first_result = first_container._results[0]
+            else:
+                first_result = first_container
+                
+            if hasattr(first_result, 'fit_markdown'):
+                return first_result.fit_markdown
+    
+    # Handle CrawlResultContainer with _results attribute
     if hasattr(result, '_results'):
-        # It's a CrawlResultContainer, try to get fit_markdown from first result
+        # It's a CrawlResultContainer, combine fit_markdown from all results
         if result._results and len(result._results) > 0:
+            combined_content = []
+            
+            for page_result in result._results:
+                page_url = getattr(page_result, 'url', "Unknown URL")
+                page_content = None
+                
+                # Try fit_markdown, if not available fall back to markdown
+                if hasattr(page_result, 'fit_markdown') and page_result.fit_markdown:
+                    page_content = page_result.fit_markdown
+                elif hasattr(page_result, 'markdown') and page_result.markdown:
+                    page_content = page_result.markdown
+                
+                if page_content:
+                    # Add page separator with URL
+                    combined_content.append(f"\n\n## Page: {page_url}\n\n{page_content}")
+            
+            if combined_content:
+                return "\n".join(combined_content)
+            
+            # Fallback to first result if no combined content
             first_result = result._results[0]
-            # Try fit_markdown
             if hasattr(first_result, 'fit_markdown'):
                 return first_result.fit_markdown
     
     # Handle CrawlResult directly
     if hasattr(result, 'fit_markdown'):
         return result.fit_markdown
-    
-    # Try dict-like access patterns
-    try:
-        if isinstance(result, dict) or hasattr(result, 'get'):
-            # Try different attribute names that might contain the content
-            for attr in ['fit_markdown', 'fit_content']:
-                content = result.get(attr)
-                if content:
-                    return content
-    except (AttributeError, TypeError):
-        pass
-    
-    # No fit content found, return None
-    return None
 
 
 async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:

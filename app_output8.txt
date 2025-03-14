@@ -1,0 +1,100 @@
+
+  You can now view your Streamlit app in your browser.
+
+  URL: http://localhost:8501
+
+2025-03-14 07:08:33,611 - crawl_agent - INFO - Starting crawl of https://docs.crawl4ai.com/
+2025-03-14 07:08:33,631 - crawl_agent - INFO - Using Pruning content filter with threshold=0.48
+2025-03-14 07:08:33,631 - crawl_agent - INFO - Using DFS deep crawl strategy with max_depth=2, max_pages=10
+2025-03-14 07:08:33,631 - crawl_agent - INFO - Valid cache modes: ['ENABLED', 'DISABLED', 'READ_ONLY', 'WRITE_ONLY', 'BYPASS']
+2025-03-14 07:08:33,631 - crawl_agent - INFO - Using cache mode: CacheMode.ENABLED
+[FETCH]... ↓ https://docs.crawl4ai.com/... | Status: True | Time: 0.03s
+[COMPLETE] ● https://docs.crawl4ai.com/... | Status: True | Total: 0.03s
+2025-03-14 07:08:34,719 - crawl4ai.deep_crawling.bfs_strategy - INFO - Limiting to 9 URLs due to max_pages limit
+[FETCH]... ↓ https://docs.crawl4ai.com/core/quickstart... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/core/quickstart... | Status: True | Total: 0.01s
+2025-03-14 07:08:34,741 - crawl4ai.deep_crawling.bfs_strategy - INFO - Limiting to 8 URLs due to max_pages limit
+[FETCH]... ↓ https://docs.crawl4ai.com/core... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/core... | Status: True | Total: 0.01s
+[FETCH]... ↓ https://docs.crawl4ai.com/installation... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/installation... | Status: True | Total: 0.01s
+[FETCH]... ↓ https://docs.crawl4ai.com/docker-deployment... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/docker-deployment... | Status: True | Total: 0.01s
+[FETCH]... ↓ https://docs.crawl4ai.com/blog... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/blog... | Status: True | Total: 0.01s
+[FETCH]... ↓ https://docs.crawl4ai.com/cli... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/cli... | Status: True | Total: 0.01s
+[FETCH]... ↓ https://docs.crawl4ai.com/simple-crawling... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/simple-crawling... | Status: True | Total: 0.01s
+[FETCH]... ↓ https://docs.crawl4ai.com/deep-crawling... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/deep-crawling... | Status: True | Total: 0.01s
+[FETCH]... ↓ https://docs.crawl4ai.com/crawler-result... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/crawler-result... | Status: True | Total: 0.01s
+[FETCH]... ↓ https://docs.crawl4ai.com/core/installation... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/core/installation... | Status: True | Total: 0.01s
+2025-03-14 07:08:34,879 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+[FETCH]... ↓ https://docs.crawl4ai.com/core/docker-deployment... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/core/docker-deployment... | Status: True | Total: 0.01s
+2025-03-14 07:08:34,894 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+[FETCH]... ↓ https://docs.crawl4ai.com/core/cli... | Status: True | Time: 0.00s
+[COMPLETE] ● https://docs.crawl4ai.com/core/cli... | Status: True | Total: 0.00s
+2025-03-14 07:08:34,902 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+[FETCH]... ↓ https://docs.crawl4ai.com/core/simple-crawling... | Status: True | Time: 0.00s
+[COMPLETE] ● https://docs.crawl4ai.com/core/simple-crawling... | Status: True | Total: 0.00s
+2025-03-14 07:08:34,910 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+[FETCH]... ↓ https://docs.crawl4ai.com/core/deep-crawling... | Status: True | Time: 0.00s
+[COMPLETE] ● https://docs.crawl4ai.com/core/deep-crawling... | Status: True | Total: 0.00s
+2025-03-14 07:08:34,918 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+[FETCH]... ↓ https://docs.crawl4ai.com/core/crawler-result... | Status: True | Time: 0.00s
+[COMPLETE] ● https://docs.crawl4ai.com/core/crawler-result... | Status: True | Total: 0.00s
+2025-03-14 07:08:34,926 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+[FETCH]... ↓ https://docs.crawl4ai.com/core/browser-crawler-con... | Status: True | Time: 0.00s
+[COMPLETE] ● https://docs.crawl4ai.com/core/browser-crawler-con... | Status: True | Total: 0.00s
+2025-03-14 07:08:34,934 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:34,934 - crawl_agent - WARNING - No content retrieved from URL
+2025-03-14 07:08:34,935 - crawl_agent - INFO - Found fit content (138857 chars)
+2025-03-14 07:08:51,303 - crawl_agent - INFO - Starting crawl of https://docs.crawl4ai.com/
+2025-03-14 07:08:51,330 - crawl_agent - INFO - Using Pruning content filter with threshold=0.48
+2025-03-14 07:08:51,330 - crawl_agent - INFO - Using BFS deep crawl strategy with max_depth=2, max_pages=10
+2025-03-14 07:08:51,330 - crawl_agent - INFO - Valid cache modes: ['ENABLED', 'DISABLED', 'READ_ONLY', 'WRITE_ONLY', 'BYPASS']
+2025-03-14 07:08:51,330 - crawl_agent - INFO - Using cache mode: CacheMode.ENABLED
+[FETCH]... ↓ https://docs.crawl4ai.com/... | Status: True | Time: 0.01s
+[COMPLETE] ● https://docs.crawl4ai.com/... | Status: True | Total: 0.01s
+2025-03-14 07:08:52,426 - crawl4ai.deep_crawling.bfs_strategy - INFO - Limiting to 9 URLs due to max_pages limit
+[FETCH]... ↓ https://docs.crawl4ai.com/core/quickstart... | Status: True | Time: 0.03s
+[COMPLETE] ● https://docs.crawl4ai.com/core/quickstart... | Status: True | Total: 0.03s
+[FETCH]... ↓ https://docs.crawl4ai.com/core/browser-crawler-con... | Status: True | Time: 0.22s
+[COMPLETE] ● https://docs.crawl4ai.com/core/browser-crawler-con... | Status: True | Total: 0.22s
+[FETCH]... ↓ https://docs.crawl4ai.com/core/docker-deployment... | Status: True | Time: 0.22s
+[COMPLETE] ● https://docs.crawl4ai.com/core/docker-deployment... | Status: True | Total: 0.22s
+[FETCH]... ↓ https://docs.crawl4ai.com/core/simple-crawling... | Status: True | Time: 0.21s
+[COMPLETE] ● https://docs.crawl4ai.com/core/simple-crawling... | Status: True | Total: 0.21s
+[FETCH]... ↓ https://docs.crawl4ai.com/core/crawler-result... | Status: True | Time: 0.21s
+[COMPLETE] ● https://docs.crawl4ai.com/core/crawler-result... | Status: True | Total: 0.21s
+[FETCH]... ↓ https://docs.crawl4ai.com/core/cli... | Status: True | Time: 0.21s
+[COMPLETE] ● https://docs.crawl4ai.com/core/cli... | Status: True | Total: 0.21s
+[FETCH]... ↓ https://docs.crawl4ai.com/core/deep-crawling... | Status: True | Time: 0.21s
+[COMPLETE] ● https://docs.crawl4ai.com/core/deep-crawling... | Status: True | Total: 0.21s
+[FETCH]... ↓ https://docs.crawl4ai.com/blog... | Status: True | Time: 0.21s
+[COMPLETE] ● https://docs.crawl4ai.com/blog... | Status: True | Total: 0.21s
+[FETCH]... ↓ https://docs.crawl4ai.com/core/installation... | Status: True | Time: 0.21s
+[COMPLETE] ● https://docs.crawl4ai.com/core/installation... | Status: True | Total: 0.21s
+2025-03-14 07:08:54,788 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:54,788 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:54,788 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:54,788 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:54,788 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:54,788 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:54,788 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:54,788 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:54,788 - crawl4ai.deep_crawling.bfs_strategy - INFO - Max pages limit (10) reached, stopping link discovery
+2025-03-14 07:08:54,788 - crawl_agent - WARNING - No content retrieved from URL
+2025-03-14 07:08:54,789 - crawl_agent - INFO - Found fit content (138191 chars)
+2025-03-14 07:09:20,231 - crawl_agent - INFO - Starting crawl of https://docs.crawl4ai.com/
+2025-03-14 07:09:20,253 - crawl_agent - INFO - Using Pruning content filter with threshold=0.48
+2025-03-14 07:09:20,253 - crawl_agent - INFO - Valid cache modes: ['ENABLED', 'DISABLED', 'READ_ONLY', 'WRITE_ONLY', 'BYPASS']
+2025-03-14 07:09:20,253 - crawl_agent - INFO - Using cache mode: CacheMode.ENABLED
+[FETCH]... ↓ https://docs.crawl4ai.com/... | Status: True | Time: 0.03s
+[COMPLETE] ● https://docs.crawl4ai.com/... | Status: True | Total: 0.04s
+2025-03-14 07:09:21,755 - crawl_agent - INFO - Generated raw markdown content (8642 chars)
+2025-03-14 07:09:21,759 - crawl_agent - INFO - Found fit content (8681 chars)
