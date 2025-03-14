@@ -96,9 +96,19 @@ class CrawlConfig(BaseModel):
     
     # Content chunking options
     enable_chunking: bool = False
-    chunking_strategy: str = "semantic"  # "fixed", "sentence", "semantic"
+    chunking_strategy: str = "semantic"  # "fixed", "sentence", "semantic", "regex", "sliding_window", "overlapping_window"
+    
+    # Parameters for fixed, sentence, and semantic chunking
     chunk_size: int = 4000
     chunk_overlap: int = 200
+    
+    # Parameters for regex chunking
+    regex_pattern: str = r"\n\n"
+    
+    # Parameters for sliding and overlapping window chunking
+    window_size: int = 500
+    step_size: int = 50
+    overlap: int = 50
     
     # Content clustering options
     enable_clustering: bool = False
@@ -768,13 +778,34 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
             from text_chunking import get_chunker
             
             # Get the appropriate chunker
-            chunker = get_chunker(
-                chunker_type=config.chunking_strategy,
-                chunk_size=config.chunk_size,
-                chunk_overlap=config.chunk_overlap,
-                max_chunk_size=config.chunk_size,
-                min_chunk_size=config.chunk_size // 10
-            )
+            chunker_params = {
+                "chunker_type": config.chunking_strategy,
+            }
+            
+            # Add specific parameters based on chunking strategy
+            if config.chunking_strategy in ["fixed", "sentence", "semantic"]:
+                chunker_params.update({
+                    "chunk_size": config.chunk_size,
+                    "chunk_overlap": config.chunk_overlap,
+                    "max_chunk_size": config.chunk_size,
+                    "min_chunk_size": config.chunk_size // 10
+                })
+            elif config.chunking_strategy == "regex":
+                chunker_params.update({
+                    "patterns": [config.regex_pattern]
+                })
+            elif config.chunking_strategy == "sliding_window":
+                chunker_params.update({
+                    "window_size": config.window_size,
+                    "step": config.step_size
+                })
+            elif config.chunking_strategy == "overlapping_window":
+                chunker_params.update({
+                    "window_size": config.window_size,
+                    "overlap": config.overlap
+                })
+            
+            chunker = get_chunker(**chunker_params)
             
             # Chunk the content
             if html_content:
@@ -1029,6 +1060,19 @@ def parse_args():
     parser.add_argument("--extraction-strategy", choices=["Basic", "LLM", "CSS Selectors", "XPath Selectors"], help="Extraction strategy")
     parser.add_argument("--css-selector", help="CSS selector")
     
+    # Chunking arguments
+    parser.add_argument("--enable-chunking", action="store_true", help="Enable content chunking")
+    parser.add_argument("--chunking-strategy", 
+                        choices=["semantic", "sentence", "fixed", "regex", "sliding_window", "overlapping_window"], 
+                        default="semantic", 
+                        help="Content chunking strategy")
+    parser.add_argument("--chunk-size", type=int, default=4000, help="Maximum chunk size in characters")
+    parser.add_argument("--chunk-overlap", type=int, default=200, help="Chunk overlap in characters")
+    parser.add_argument("--regex-pattern", default=r"\n\n", help="Regex pattern for splitting content")
+    parser.add_argument("--window-size", type=int, default=500, help="Window size in words for sliding/overlapping chunking")
+    parser.add_argument("--step-size", type=int, default=50, help="Step size in words for sliding window chunking")
+    parser.add_argument("--overlap", type=int, default=50, help="Overlap in words for overlapping window chunking")
+    
     # JavaScript execution
     parser.add_argument("--js-code", help="Custom JavaScript code")
     parser.add_argument("--delay-before-return-html", type=int, default=0, help="Delay before returning HTML")
@@ -1078,7 +1122,15 @@ async def main():
         save_raw_markdown=args.save_raw_markdown,
         magic=args.magic,
         word_count_threshold=args.word_count_threshold,
-        excluded_tags=args.excluded_tags
+        excluded_tags=args.excluded_tags,
+        enable_chunking=args.enable_chunking,
+        chunking_strategy=args.chunking_strategy,
+        chunk_size=args.chunk_size,
+        chunk_overlap=args.chunk_overlap,
+        regex_pattern=args.regex_pattern,
+        window_size=args.window_size,
+        step_size=args.step_size,
+        overlap=args.overlap
     )
     
     # Run the crawl

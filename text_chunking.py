@@ -248,20 +248,18 @@ class SemanticChunker(BaseChunker):
         # Look for markdown-style headers
         header_matches = list(re.finditer(r'^#{1,6}\s+.+$', text, re.MULTILINE))
         
-        # Look for repeated line breaks which might indicate section breaks
-        newline_matches = list(re.finditer(r'\n\s*\n', text))
+        # Look for HTML-style headers
+        html_header_matches = list(re.finditer(r'<h[1-6][^>]*>.*?</h[1-6]>', text, re.DOTALL | re.IGNORECASE))
         
-        # Combine and sort all potential boundary indices
-        boundaries = []
+        # Look for other boundary markers
+        boundary_matches = list(re.finditer(r'^[A-Z][^.!?]+:$', text, re.MULTILINE))  # Title with colon
+        boundary_matches.extend(re.finditer(r'\n\s*\n', text))  # Double newline
         
-        for match in header_matches:
-            boundaries.append(match.start())
+        # Combine all matches
+        all_matches = header_matches + html_header_matches + boundary_matches
         
-        for match in newline_matches:
-            boundaries.append(match.start())
-        
-        # Sort and remove duplicates
-        boundaries = sorted(set(boundaries))
+        # Extract start indices, removing duplicates
+        boundaries = sorted(set(m.start() for m in all_matches))
         
         return boundaries
     
@@ -283,122 +281,312 @@ class SemanticChunker(BaseChunker):
         max_chunk_size = kwargs.get("max_chunk_size", self.max_chunk_size)
         min_chunk_size = kwargs.get("min_chunk_size", self.min_chunk_size)
         
-        # Find section boundaries
+        # Find semantic boundaries
         boundaries = self._find_section_boundaries(text)
         
         # If no boundaries found, fall back to sentence chunking
         if not boundaries:
             return self.sentence_chunker.chunk_text(text, 
-                                               max_chunk_size=max_chunk_size, 
-                                               min_chunk_size=min_chunk_size)
+                                                    max_chunk_size=max_chunk_size,
+                                                    min_chunk_size=min_chunk_size)
         
-        # Create chunks based on sections
-        chunks = []
-        start_idx = 0
+        # Add text start and end to boundaries
+        if 0 not in boundaries:
+            boundaries.insert(0, 0)
+        if len(text) not in boundaries:
+            boundaries.append(len(text))
         
-        for idx in boundaries:
-            # If current section is too big, chunk it further
-            if idx - start_idx > max_chunk_size:
-                section_text = text[start_idx:idx]
-                section_chunks = self.sentence_chunker.chunk_text(section_text,
+        # Create initial chunks based on semantic boundaries
+        raw_chunks = []
+        for i in range(len(boundaries) - 1):
+            start = boundaries[i]
+            end = boundaries[i + 1]
+            
+            # Skip empty sections
+            if end > start:
+                raw_chunks.append(text[start:end])
+        
+        # Further process chunks that are too large
+        final_chunks = []
+        for raw_chunk in raw_chunks:
+            if len(raw_chunk) <= max_chunk_size:
+                final_chunks.append(raw_chunk)
+            else:
+                # If chunk is too large, use sentence chunking
+                sub_chunks = self.sentence_chunker.chunk_text(raw_chunk,
                                                             max_chunk_size=max_chunk_size,
                                                             min_chunk_size=min_chunk_size)
-                chunks.extend(section_chunks)
-            else:
-                # Add section as a chunk if it's big enough
-                section_text = text[start_idx:idx]
-                if len(section_text) >= min_chunk_size:
-                    chunks.append(section_text)
-                elif chunks:  # If too small, append to previous chunk if possible
-                    chunks[-1] += section_text
-                else:  # If this is the first chunk, keep it despite size
-                    chunks.append(section_text)
-            
-            # Update start index
-            start_idx = idx
+                final_chunks.extend(sub_chunks)
         
-        # Handle the last section
-        if start_idx < len(text):
-            last_section = text[start_idx:]
-            if len(last_section) > max_chunk_size:
-                last_chunks = self.sentence_chunker.chunk_text(last_section,
-                                                         max_chunk_size=max_chunk_size,
-                                                         min_chunk_size=min_chunk_size)
-                chunks.extend(last_chunks)
-            elif len(last_section) >= min_chunk_size or not chunks:
-                chunks.append(last_section)
-            elif chunks:
-                chunks[-1] += last_section
-        
-        return chunks
+        return final_chunks
     
     def chunk_html(self, html: str, **kwargs) -> List[str]:
-        """Split HTML content into chunks, trying to maintain HTML structure.
+        """Split HTML content into semantically coherent chunks.
         
         Args:
             html: The HTML content to chunk
             **kwargs: Additional parameters
             
         Returns:
-            List of HTML chunks
+            List of text chunks
         """
+        # Try to find semantic boundaries in HTML
         try:
-            # Parse HTML
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Get parameters with possible overrides
-            max_chunk_size = kwargs.get("max_chunk_size", self.max_chunk_size)
-            min_chunk_size = kwargs.get("min_chunk_size", self.min_chunk_size)
+            # Find all header elements
+            headers = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
             
-            # Find natural chunk boundaries based on HTML structure
-            chunks = []
-            current_chunk = ""
-            
-            # Consider headers, divs, sections as chunk boundaries
-            for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'section', 'article', 'p']):
-                # Get HTML string for this element
-                element_html = str(element)
+            # If we have headers, try to chunk by sections
+            if headers:
+                chunks = []
+                current_section = ""
                 
-                # If adding this element would exceed max_chunk_size
-                if len(current_chunk) + len(element_html) > max_chunk_size and len(current_chunk) >= min_chunk_size:
-                    # Add current chunk to chunks and start a new one
-                    chunks.append(current_chunk)
-                    current_chunk = element_html
-                else:
-                    # Add element to current chunk
-                    current_chunk += element_html
-            
-            # Add the last chunk if it's not empty
-            if current_chunk:
-                chunks.append(current_chunk)
-            
-            # If no chunks were created, fall back to text chunking
-            if not chunks:
-                text = soup.get_text(separator=" ", strip=True)
-                return self.chunk_text(text, **kwargs)
-            
-            return chunks
-            
+                # Function to get all content up to next header
+                def get_next_elements(elem):
+                    content = []
+                    current = elem.next_sibling
+                    while current and not (current.name and current.name.startswith('h') and len(current.name) == 2):
+                        if hasattr(current, 'text'):
+                            content.append(current.text.strip())
+                        elif isinstance(current, str):
+                            content.append(current.strip())
+                        current = current.next_sibling
+                    return ' '.join(filter(None, content))
+                
+                # Process each header and its content
+                for header in headers:
+                    # Extract header text
+                    header_text = header.text.strip()
+                    
+                    # Get content following this header
+                    section_content = get_next_elements(header)
+                    
+                    # Create a new section
+                    current_section = f"{header_text}\n\n{section_content}".strip()
+                    
+                    # Add to chunks if not empty
+                    if current_section:
+                        chunks.append(current_section)
+                
+                # If we created chunks, return them - otherwise fall through to default method
+                if chunks:
+                    max_chunk_size = kwargs.get("max_chunk_size", self.max_chunk_size)
+                    min_chunk_size = kwargs.get("min_chunk_size", self.min_chunk_size)
+                    
+                    # Further process chunks that are too large
+                    final_chunks = []
+                    for chunk in chunks:
+                        if len(chunk) <= max_chunk_size:
+                            final_chunks.append(chunk)
+                        else:
+                            # If chunk is too large, use sentence chunking
+                            sub_chunks = self.sentence_chunker.chunk_text(chunk,
+                                                                        max_chunk_size=max_chunk_size,
+                                                                        min_chunk_size=min_chunk_size)
+                            final_chunks.extend(sub_chunks)
+                    
+                    return final_chunks
+        
         except Exception as e:
-            logger.error(f"Error chunking HTML: {e}")
-            # Fall back to text chunking
-            return super().chunk_html(html, **kwargs)
+            logger.error(f"Error performing semantic HTML chunking: {e}")
+        
+        # Fall back to default method
+        return super().chunk_html(html, **kwargs)
+
+
+class RegexChunking(BaseChunker):
+    """Chunker that splits text based on regex patterns."""
+    
+    def __init__(self, patterns: List[str] = None):
+        """Initialize the regex chunker.
+        
+        Args:
+            patterns: List of regex patterns for splitting text
+                     Default: [r'\n\n'] (split on double newline)
+        """
+        super().__init__()
+        self.patterns = patterns or [r'\n\n']  # Default pattern for paragraphs
+    
+    def chunk_text(self, text: str, **kwargs) -> List[str]:
+        """Split text based on regex patterns.
+        
+        Args:
+            text: The text to chunk
+            **kwargs: Additional parameters
+            
+        Returns:
+            List of text chunks
+        """
+        # Handle empty or None text
+        if not text:
+            return []
+        
+        # Get patterns from kwargs if provided
+        patterns = kwargs.get("patterns", self.patterns)
+        
+        # Apply each pattern in sequence
+        chunks = [text]
+        for pattern in patterns:
+            # Create a new list of chunks by splitting existing chunks
+            new_chunks = []
+            for chunk in chunks:
+                # Split the chunk using the current pattern
+                split_parts = re.split(pattern, chunk)
+                # Add non-empty parts to new chunks
+                new_chunks.extend([part.strip() for part in split_parts if part.strip()])
+            # Update chunks for next iteration
+            chunks = new_chunks
+        
+        return chunks
+
+
+class SlidingWindowChunking(BaseChunker):
+    """Chunker that creates chunks with a sliding window approach."""
+    
+    def __init__(self, window_size: int = 100, step: int = 50):
+        """Initialize the sliding window chunker.
+        
+        Args:
+            window_size: Number of words per window
+            step: Number of words to slide the window
+        """
+        super().__init__()
+        self.window_size = window_size
+        self.step = step
+    
+    def chunk_text(self, text: str, **kwargs) -> List[str]:
+        """Split text into chunks using a sliding window.
+        
+        Args:
+            text: The text to chunk
+            **kwargs: Additional parameters
+            
+        Returns:
+            List of text chunks
+        """
+        # Handle empty or None text
+        if not text:
+            return []
+        
+        # Get parameters with possible overrides
+        window_size = kwargs.get("window_size", self.window_size)
+        step = kwargs.get("step", self.step)
+        
+        # Tokenize the text into words
+        try:
+            words = word_tokenize(text)
+        except Exception as e:
+            logger.error(f"Error tokenizing words: {e}")
+            # Simple fallback tokenization by splitting on whitespace
+            words = text.split()
+        
+        # Handle case with fewer words than window size
+        if len(words) <= window_size:
+            return [text]
+        
+        # Create chunks using sliding window
+        chunks = []
+        for i in range(0, len(words) - window_size + 1, step):
+            # Extract words for this window
+            window_words = words[i:i + window_size]
+            # Join words back into text
+            chunk = ' '.join(window_words)
+            chunks.append(chunk)
+        
+        return chunks
+
+
+class OverlappingWindowChunking(BaseChunker):
+    """Chunker that creates chunks with specified overlap."""
+    
+    def __init__(self, window_size: int = 500, overlap: int = 50):
+        """Initialize the overlapping window chunker.
+        
+        Args:
+            window_size: Number of words per chunk
+            overlap: Number of words to overlap between chunks
+        """
+        super().__init__()
+        self.window_size = window_size
+        self.overlap = min(overlap, window_size - 1)  # Ensure overlap is less than window_size
+    
+    def chunk_text(self, text: str, **kwargs) -> List[str]:
+        """Split text into chunks with specified overlap.
+        
+        Args:
+            text: The text to chunk
+            **kwargs: Additional parameters
+            
+        Returns:
+            List of text chunks
+        """
+        # Handle empty or None text
+        if not text:
+            return []
+        
+        # Get parameters with possible overrides
+        window_size = kwargs.get("window_size", self.window_size)
+        overlap = kwargs.get("overlap", self.overlap)
+        overlap = min(overlap, window_size - 1)  # Ensure overlap is less than window_size
+        
+        # Calculate step size based on window size and overlap
+        step = window_size - overlap
+        
+        # Tokenize the text into words
+        try:
+            words = word_tokenize(text)
+        except Exception as e:
+            logger.error(f"Error tokenizing words: {e}")
+            # Simple fallback tokenization by splitting on whitespace
+            words = text.split()
+        
+        # Handle case with fewer words than window size
+        if len(words) <= window_size:
+            return [text]
+        
+        # Create chunks with overlap
+        chunks = []
+        for i in range(0, len(words), step):
+            # Extract words for this chunk
+            chunk_words = words[i:i + window_size]
+            # Skip small final chunks
+            if len(chunk_words) < window_size * 0.5 and chunks:
+                # Instead of creating a small final chunk, extend the last chunk
+                last_chunk_words = words[i - step:i + len(chunk_words)]
+                chunks[-1] = ' '.join(last_chunk_words)
+                break
+            # Join words back into text
+            chunk = ' '.join(chunk_words)
+            chunks.append(chunk)
+        
+        return chunks
 
 
 def get_chunker(chunker_type: str = "semantic", **kwargs) -> BaseChunker:
     """Get a chunker by type.
     
     Args:
-        chunker_type: Type of chunker ('fixed', 'sentence', or 'semantic')
+        chunker_type: Type of chunker ('fixed', 'sentence', 'semantic', 'regex', 'sliding_window', 'overlapping_window')
         **kwargs: Additional parameters for the chunker
         
     Returns:
         A chunker instance
     """
-    chunkers = {
-        "fixed": FixedSizeChunker(**kwargs),
-        "sentence": SentenceChunker(**kwargs),
-        "semantic": SemanticChunker(**kwargs)
-    }
+    chunker_type = chunker_type.lower()
     
-    return chunkers.get(chunker_type.lower(), SemanticChunker(**kwargs)) 
+    if chunker_type == "fixed":
+        return FixedSizeChunker(**kwargs)
+    elif chunker_type == "sentence":
+        return SentenceChunker(**kwargs)
+    elif chunker_type == "semantic":
+        return SemanticChunker(**kwargs)
+    elif chunker_type == "regex":
+        return RegexChunking(**kwargs)
+    elif chunker_type in ["sliding_window", "sliding"]:
+        return SlidingWindowChunking(**kwargs)
+    elif chunker_type in ["overlapping_window", "overlapping"]:
+        return OverlappingWindowChunking(**kwargs)
+    else:
+        logger.warning(f"Unknown chunker type: {chunker_type}, using semantic chunker")
+        return SemanticChunker(**kwargs) 

@@ -423,28 +423,71 @@ with st.sidebar:
         with chunking_col1:
             chunking_strategy = st.selectbox(
                 "Chunking Strategy",
-                ["semantic", "sentence", "fixed"],
-                help="Method to split content: semantic (preserves meaning), sentence (splits by sentences), fixed (equal size chunks)"
+                ["semantic", "sentence", "fixed", "regex", "sliding_window", "overlapping_window"],
+                help="Method to split content: semantic (preserves meaning), sentence (splits by sentences), fixed (equal size chunks), regex (pattern-based), sliding_window (overlapping with step size), overlapping_window (specified overlap)"
             )
         
         with chunking_col2:
-            chunk_size = st.number_input(
-                "Max Chunk Size (chars)",
-                min_value=1000,
-                max_value=10000,
-                value=4000,
-                step=500,
-                help="Maximum size of each chunk in characters"
-            )
-            
-            chunk_overlap = st.number_input(
-                "Chunk Overlap (chars)",
-                min_value=0,
-                max_value=1000,
-                value=200,
-                step=50,
-                help="Number of characters to overlap between chunks"
-            )
+            if chunking_strategy in ["semantic", "sentence", "fixed"]:
+                chunk_size = st.number_input(
+                    "Max Chunk Size (chars)",
+                    min_value=1000,
+                    max_value=10000,
+                    value=4000,
+                    step=500,
+                    help="Maximum size of each chunk in characters"
+                )
+                
+                chunk_overlap = st.number_input(
+                    "Chunk Overlap (chars)",
+                    min_value=0,
+                    max_value=1000,
+                    value=200,
+                    step=50,
+                    help="Overlap between chunks in characters"
+                )
+            elif chunking_strategy == "regex":
+                regex_pattern = st.text_area(
+                    "Regex Pattern",
+                    value=r"\n\n",
+                    help="Regular expression pattern to split the text (e.g., \\n\\n splits on double newlines)"
+                )
+            elif chunking_strategy == "sliding_window":
+                window_size = st.number_input(
+                    "Window Size (words)",
+                    min_value=50,
+                    max_value=1000,
+                    value=100,
+                    step=10,
+                    help="Size of each window in words"
+                )
+                
+                step_size = st.number_input(
+                    "Step Size (words)",
+                    min_value=10,
+                    max_value=500,
+                    value=50,
+                    step=10,
+                    help="Number of words to slide the window for each chunk"
+                )
+            elif chunking_strategy == "overlapping_window":
+                window_size = st.number_input(
+                    "Window Size (words)",
+                    min_value=50,
+                    max_value=1000,
+                    value=500,
+                    step=50,
+                    help="Size of each window in words"
+                )
+                
+                overlap = st.number_input(
+                    "Overlap (words)",
+                    min_value=10,
+                    max_value=500,
+                    value=50,
+                    step=10,
+                    help="Number of words to overlap between chunks"
+                )
     
     # Add clustering options
     enable_clustering = st.checkbox(
@@ -580,8 +623,20 @@ if crawl_button:
             # Chunking options
             enable_chunking=enable_chunking,
             chunking_strategy=chunking_strategy if enable_chunking else "semantic",
-            chunk_size=chunk_size if enable_chunking else 4000,
-            chunk_overlap=chunk_overlap if enable_chunking else 200,
+            
+            # Default chunking parameters
+            chunk_size=chunk_size if enable_chunking and chunking_strategy in ["semantic", "sentence", "fixed"] else 4000,
+            chunk_overlap=chunk_overlap if enable_chunking and chunking_strategy in ["semantic", "sentence", "fixed"] else 200,
+            
+            # Regex chunking parameters
+            regex_pattern=regex_pattern if enable_chunking and chunking_strategy == "regex" else r"\n\n",
+            
+            # Sliding window parameters
+            window_size=window_size if enable_chunking and chunking_strategy in ["sliding_window", "overlapping_window"] else 500,
+            step_size=step_size if enable_chunking and chunking_strategy == "sliding_window" else 50,
+            
+            # Overlapping window parameters
+            overlap=overlap if enable_chunking and chunking_strategy == "overlapping_window" else 50,
             
             # Clustering options
             enable_clustering=enable_clustering,

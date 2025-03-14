@@ -1,302 +1,309 @@
 """
-Clustering strategies for organizing crawled content.
+Clustering strategies for content analysis.
 """
 
 import logging
-import re
 import numpy as np
-from typing import List, Dict, Any, Tuple, Optional
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans, AgglomerativeClustering
+from typing import List, Dict, Any, Optional, Tuple, Union
+from sentence_transformers import SentenceTransformer
+from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.decomposition import TruncatedSVD
+from sklearn.feature_extraction.text import CountVectorizer
 
+# Configure logging
 logger = logging.getLogger(__name__)
 
 class BaseClusteringStrategy:
-    """Base class for all clustering strategies."""
+    """Base class for clustering strategies."""
     
-    def __init__(self, n_clusters: int = 5):
+    def __init__(self, verbose: bool = False):
         """Initialize the clustering strategy.
         
         Args:
-            n_clusters: Number of clusters to create
+            verbose: Enable verbose logging
         """
-        self.n_clusters = n_clusters
-        self.vectorizer = TfidfVectorizer(
-            max_features=10000,
-            stop_words='english',
-            ngram_range=(1, 2),
-            min_df=2
-        )
-    
-    def preprocess_text(self, text: str) -> str:
-        """Preprocess text for clustering.
-        
-        Args:
-            text: Raw text to preprocess
-            
-        Returns:
-            Preprocessed text
-        """
-        # Convert to lowercase
-        text = text.lower()
-        
-        # Remove URLs
-        text = re.sub(r'https?://\S+', '', text)
-        
-        # Remove non-alphanumeric characters
-        text = re.sub(r'[^\w\s]', ' ', text)
-        
-        # Remove extra whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        return text
-    
-    def vectorize(self, texts: List[str]) -> np.ndarray:
-        """Convert texts to feature vectors.
-        
-        Args:
-            texts: List of text documents
-            
-        Returns:
-            Feature vectors
-        """
-        # Preprocess texts
-        preprocessed_texts = [self.preprocess_text(text) for text in texts]
-        
-        # Vectorize texts
-        try:
-            vectors = self.vectorizer.fit_transform(preprocessed_texts)
-            return vectors
-        except Exception as e:
-            logger.error(f"Error vectorizing texts: {e}")
-            # Return a zero matrix as fallback
-            return np.zeros((len(texts), 1))
+        self.verbose = verbose
     
     def cluster(self, texts: List[str]) -> Tuple[List[int], Any]:
-        """Cluster texts.
+        """Cluster the provided texts.
         
         Args:
-            texts: List of text documents
+            texts: List of text to cluster
             
         Returns:
-            Tuple of (cluster_labels, clustering_model)
+            Tuple of (cluster_labels, cluster_model)
         """
-        raise NotImplementedError("Subclasses must implement the cluster method")
+        raise NotImplementedError("Subclasses must implement cluster method")
     
-    def get_cluster_keywords(self, cluster_model: Any, cluster_idx: int, top_n: int = 5) -> List[str]:
+    def get_cluster_summary(self, texts: List[str], labels: List[int]) -> Dict[int, List[str]]:
+        """Get a summary of clusters.
+        
+        Args:
+            texts: List of texts
+            labels: Cluster labels for each text
+            
+        Returns:
+            Dictionary mapping cluster IDs to lists of texts
+        """
+        clusters = {}
+        for i, label in enumerate(labels):
+            if label not in clusters:
+                clusters[label] = []
+            clusters[label].append(texts[i])
+        return clusters
+    
+    def get_cluster_keywords(self, model: Any, cluster_id: int, top_n: int = 5) -> List[str]:
         """Get top keywords for a cluster.
         
         Args:
-            cluster_model: Trained clustering model
-            cluster_idx: Cluster index
+            model: Clustering model or feature extractor
+            cluster_id: ID of the cluster
             top_n: Number of top keywords to return
             
         Returns:
             List of top keywords
         """
-        raise NotImplementedError("Subclasses must implement the get_cluster_keywords method")
+        raise NotImplementedError("Subclasses must implement get_cluster_keywords method")
+
+
+class CosineStrategy(BaseClusteringStrategy):
+    """Clustering strategy based on cosine similarity."""
     
-    def get_cluster_summary(self, texts: List[str], labels: List[int]) -> Dict[int, Dict[str, Any]]:
-        """Generate summary information for each cluster.
+    def __init__(
+        self,
+        semantic_filter: Optional[str] = None,
+        word_count_threshold: int = 10,
+        sim_threshold: float = 0.3,
+        max_dist: float = 0.2,
+        linkage_method: str = 'ward',
+        top_k: int = 3,
+        model_name: str = 'sentence-transformers/all-MiniLM-L6-v2',
+        verbose: bool = False
+    ):
+        """Initialize the cosine similarity clustering strategy.
         
         Args:
-            texts: List of text documents
-            labels: Cluster labels for each document
+            semantic_filter: Topic/keyword filter
+            word_count_threshold: Minimum words per cluster
+            sim_threshold: Similarity threshold
+            max_dist: Maximum cluster distance
+            linkage_method: Clustering method ('ward', 'complete', 'average', 'single')
+            top_k: Top clusters to return
+            model_name: Name of the sentence-transformers model to use
+            verbose: Enable verbose logging
+        """
+        super().__init__(verbose=verbose)
+        self.semantic_filter = semantic_filter
+        self.word_count_threshold = word_count_threshold
+        self.sim_threshold = sim_threshold
+        self.max_dist = max_dist
+        self.linkage_method = linkage_method
+        self.top_k = top_k
+        self.model_name = model_name
+        
+        # Load the model
+        try:
+            self.model = SentenceTransformer(model_name)
+            if verbose:
+                logger.info(f"Loaded embedding model: {model_name}")
+        except Exception as e:
+            logger.error(f"Error loading embedding model: {e}")
+            self.model = None
+    
+    def _filter_by_word_count(self, texts: List[str]) -> List[int]:
+        """Filter texts by word count.
+        
+        Args:
+            texts: List of texts to filter
             
         Returns:
-            Dictionary of cluster summaries
+            Indices of texts that meet the word count threshold
         """
-        cluster_counts = {}
-        cluster_texts = {}
+        valid_indices = []
+        for i, text in enumerate(texts):
+            if len(text.split()) >= self.word_count_threshold:
+                valid_indices.append(i)
         
-        # Group texts by cluster
-        for i, label in enumerate(labels):
-            if label not in cluster_counts:
-                cluster_counts[label] = 0
-                cluster_texts[label] = []
-            
-            cluster_counts[label] += 1
-            cluster_texts[label].append(texts[i])
+        if self.verbose:
+            logger.info(f"Filtered {len(texts) - len(valid_indices)} texts below word count threshold")
         
-        # Create summaries
-        summaries = {}
-        for label in sorted(cluster_counts.keys()):
-            text_samples = cluster_texts[label][:3]  # Take first 3 texts as samples
-            
-            summaries[label] = {
-                "count": cluster_counts[label],
-                "samples": text_samples,
-                "avg_length": sum(len(t) for t in cluster_texts[label]) / len(cluster_texts[label])
-            }
-        
-        return summaries
-
-
-class KMeansClusteringStrategy(BaseClusteringStrategy):
-    """K-means clustering strategy."""
+        return valid_indices
     
-    def cluster(self, texts: List[str]) -> Tuple[List[int], Any]:
-        """Cluster texts using K-means.
+    def _filter_by_semantic_relevance(self, embeddings: np.ndarray) -> List[int]:
+        """Filter texts by semantic relevance to the filter query.
         
         Args:
-            texts: List of text documents
+            embeddings: Text embeddings
+            
+        Returns:
+            Indices of semantically relevant texts
+        """
+        if not self.semantic_filter or not self.model:
+            # No filtering if no semantic filter or model
+            return list(range(len(embeddings)))
+        
+        # Get embedding for the filter query
+        filter_embedding = self.model.encode([self.semantic_filter])[0]
+        
+        # Calculate similarity with all text embeddings
+        similarities = cosine_similarity([filter_embedding], embeddings)[0]
+        
+        # Filter by threshold
+        valid_indices = [i for i, sim in enumerate(similarities) if sim >= self.sim_threshold]
+        
+        if self.verbose:
+            logger.info(f"Filtered {len(embeddings) - len(valid_indices)} texts below semantic similarity threshold")
+        
+        return valid_indices
+    
+    def cluster(self, texts: List[str]) -> Tuple[List[int], AgglomerativeClustering]:
+        """Cluster texts based on cosine similarity.
+        
+        Args:
+            texts: List of texts to cluster
             
         Returns:
             Tuple of (cluster_labels, clustering_model)
         """
-        # Handle empty input
         if not texts:
+            logger.warning("No texts provided for clustering")
             return [], None
         
-        # Handle case with fewer documents than clusters
-        n_clusters = min(self.n_clusters, len(texts))
+        if not self.model:
+            logger.error("No embedding model available for clustering")
+            return [0] * len(texts), None
         
-        # Vectorize texts
-        vectors = self.vectorize(texts)
+        # Filter texts by word count
+        valid_indices = self._filter_by_word_count(texts)
+        if not valid_indices:
+            logger.warning("No texts meet the word count threshold")
+            return [0] * len(texts), None
         
-        # Apply dimensionality reduction if needed
-        if vectors.shape[1] > 100:
-            svd = TruncatedSVD(n_components=100)
-            vectors = svd.fit_transform(vectors)
+        filtered_texts = [texts[i] for i in valid_indices]
         
-        # Cluster vectors
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-        labels = kmeans.fit_predict(vectors)
+        # Generate embeddings
+        embeddings = self.model.encode(filtered_texts)
         
-        return labels.tolist(), kmeans
+        # Filter by semantic relevance
+        semantic_indices = self._filter_by_semantic_relevance(embeddings)
+        if not semantic_indices:
+            logger.warning("No texts meet the semantic relevance threshold")
+            return [0] * len(texts), None
+        
+        # Map back to original indices
+        final_indices = [valid_indices[i] for i in semantic_indices]
+        final_embeddings = embeddings[semantic_indices]
+        
+        # Determine number of clusters
+        n_clusters = min(self.top_k, len(final_embeddings))
+        if n_clusters <= 1:
+            # If only one cluster, assign all to cluster 0
+            cluster_labels = [0] * len(texts)
+            for i, idx in enumerate(final_indices):
+                cluster_labels[idx] = 0
+            return cluster_labels, None
+        
+        # Perform clustering
+        clustering_model = AgglomerativeClustering(
+            n_clusters=n_clusters,
+            affinity='cosine',
+            linkage=self.linkage_method,
+            distance_threshold=self.max_dist if n_clusters is None else None
+        )
+        
+        # Fit the model
+        sub_labels = clustering_model.fit_predict(final_embeddings)
+        
+        # Map labels back to original texts
+        cluster_labels = [-1] * len(texts)  # -1 for filtered out texts
+        for i, idx in enumerate(final_indices):
+            cluster_labels[idx] = sub_labels[i]
+        
+        if self.verbose:
+            logger.info(f"Created {n_clusters} clusters from {len(final_indices)} texts")
+        
+        return cluster_labels, clustering_model
     
-    def get_cluster_keywords(self, cluster_model: KMeans, cluster_idx: int, top_n: int = 5) -> List[str]:
-        """Get top keywords for a K-means cluster.
+    def get_cluster_keywords(self, model: Any, cluster_id: int, top_n: int = 5) -> List[str]:
+        """Get top keywords for a cluster using CountVectorizer.
         
         Args:
-            cluster_model: Trained K-means model
-            cluster_idx: Cluster index
+            model: Not used for this implementation
+            cluster_id: ID of the cluster
             top_n: Number of top keywords to return
             
         Returns:
             List of top keywords
         """
-        if not hasattr(self.vectorizer, 'get_feature_names_out'):
+        # This implementation gets keywords based on the most recent clustering
+        # It requires that get_cluster_summary has been called to organize texts by cluster
+        if not hasattr(self, '_cluster_texts'):
+            logger.warning("No cluster texts available. Call get_cluster_summary first.")
             return []
         
-        # Get feature names
-        feature_names = self.vectorizer.get_feature_names_out()
+        if cluster_id not in self._cluster_texts:
+            logger.warning(f"Cluster ID {cluster_id} not found")
+            return []
         
-        # Get cluster center
-        center = cluster_model.cluster_centers_[cluster_idx]
-        
-        # Get indices of features with highest values
-        indices = np.argsort(center)[::-1][:top_n]
-        
-        # Get keywords
-        keywords = [feature_names[i] for i in indices]
-        
-        return keywords
-
-
-class HierarchicalClusteringStrategy(BaseClusteringStrategy):
-    """Hierarchical clustering strategy."""
-    
-    def __init__(self, n_clusters: int = 5, linkage: str = 'ward'):
-        """Initialize the hierarchical clustering strategy.
-        
-        Args:
-            n_clusters: Number of clusters to create
-            linkage: Linkage criterion ('ward', 'complete', 'average', 'single')
-        """
-        super().__init__(n_clusters)
-        self.linkage = linkage
-    
-    def cluster(self, texts: List[str]) -> Tuple[List[int], Tuple[Any, np.ndarray]]:
-        """Cluster texts using hierarchical clustering.
-        
-        Args:
-            texts: List of text documents
-            
-        Returns:
-            Tuple of (cluster_labels, (clustering_model, vectors))
-        """
-        # Handle empty input
+        texts = self._cluster_texts.get(cluster_id, [])
         if not texts:
-            return [], (None, None)
-        
-        # Handle case with fewer documents than clusters
-        n_clusters = min(self.n_clusters, len(texts))
-        
-        # Vectorize texts
-        vectors = self.vectorize(texts)
-        
-        # Convert to dense matrix if needed
-        if hasattr(vectors, 'toarray'):
-            vectors_dense = vectors.toarray()
-        else:
-            vectors_dense = vectors
-        
-        # Cluster vectors
-        model = AgglomerativeClustering(n_clusters=n_clusters, linkage=self.linkage)
-        labels = model.fit_predict(vectors_dense)
-        
-        return labels.tolist(), (model, vectors)
-    
-    def get_cluster_keywords(self, cluster_data: Tuple[Any, np.ndarray], cluster_idx: int, top_n: int = 5) -> List[str]:
-        """Get top keywords for a hierarchical cluster.
-        
-        Args:
-            cluster_data: Tuple of (clustering_model, vectors)
-            cluster_idx: Cluster index
-            top_n: Number of top keywords to return
-            
-        Returns:
-            List of top keywords
-        """
-        if not hasattr(self.vectorizer, 'get_feature_names_out'):
             return []
         
-        # Unpack cluster data
-        model, vectors = cluster_data
+        # Join all texts in the cluster
+        combined_text = " ".join(texts)
         
-        # Get feature names
-        feature_names = self.vectorizer.get_feature_names_out()
+        # Extract keywords using CountVectorizer
+        vectorizer = CountVectorizer(stop_words='english', max_features=top_n)
+        try:
+            X = vectorizer.fit_transform([combined_text])
+            feature_names = vectorizer.get_feature_names_out()
+            return list(feature_names)
+        except Exception as e:
+            logger.error(f"Error extracting keywords: {e}")
+            return []
+    
+    def get_cluster_summary(self, texts: List[str], labels: List[int]) -> Dict[int, List[str]]:
+        """Get a summary of clusters.
         
-        # Get document indices for this cluster
-        cluster_indices = np.where(model.labels_ == cluster_idx)[0]
-        
-        # Get vectors for this cluster
-        if hasattr(vectors, 'toarray'):
-            cluster_vectors = vectors[cluster_indices].toarray()
-        else:
-            cluster_vectors = vectors[cluster_indices]
-        
-        # Get mean vector for this cluster
-        if len(cluster_vectors) > 0:
-            mean_vector = np.mean(cluster_vectors, axis=0)
+        Args:
+            texts: List of texts
+            labels: Cluster labels for each text
             
-            # Get indices of features with highest values
-            indices = np.argsort(mean_vector)[::-1][:top_n]
-            
-            # Get keywords
-            keywords = [feature_names[i] for i in indices]
-            
-            return keywords
+        Returns:
+            Dictionary mapping cluster IDs to lists of texts
+        """
+        # Call parent method
+        clusters = super().get_cluster_summary(texts, labels)
         
-        return []
+        # Store for keyword extraction
+        self._cluster_texts = clusters
+        
+        return clusters
 
 
-def get_clustering_strategy(strategy_name: str, n_clusters: int = 5) -> BaseClusteringStrategy:
+def get_clustering_strategy(strategy_name: str = "kmeans", **kwargs) -> BaseClusteringStrategy:
     """Get a clustering strategy by name.
     
     Args:
-        strategy_name: Name of the strategy ('kmeans' or 'hierarchical')
-        n_clusters: Number of clusters to create
+        strategy_name: Name of the strategy ('cosine', 'kmeans', 'hierarchical')
+        **kwargs: Additional parameters for the strategy
         
     Returns:
-        Clustering strategy
+        A clustering strategy instance
     """
-    strategies = {
-        'kmeans': KMeansClusteringStrategy(n_clusters),
-        'hierarchical': HierarchicalClusteringStrategy(n_clusters)
-    }
+    strategy_name = strategy_name.lower()
     
-    return strategies.get(strategy_name.lower(), KMeansClusteringStrategy(n_clusters)) 
+    if strategy_name in ['cosine', 'cosine_similarity']:
+        return CosineStrategy(**kwargs)
+    elif strategy_name in ['kmeans', 'k-means']:
+        # Currently mapped to CosineStrategy since it's the most versatile
+        logger.info("KMeans clustering mapped to CosineStrategy")
+        return CosineStrategy(**kwargs)
+    elif strategy_name in ['hierarchical', 'agglomerative']:
+        # Currently mapped to CosineStrategy with ward linkage
+        logger.info("Hierarchical clustering mapped to CosineStrategy with ward linkage")
+        kwargs['linkage_method'] = 'ward'
+        return CosineStrategy(**kwargs)
+    else:
+        logger.warning(f"Unknown clustering strategy: {strategy_name}, using CosineStrategy")
+        return CosineStrategy(**kwargs) 
