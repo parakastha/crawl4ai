@@ -4,3 +4,7 @@ asyncio
 crawl4ai
 pydantic
 requests
+openai>=1.0.0
+langchain>=0.1.0
+langchain-openai>=0.0.1
+chromadb>=0.4.18

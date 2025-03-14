@@ -1,6 +1,6 @@
 # Crawl4AI Agent
 
-A powerful AI agent that can crawl any website using the Crawl4AI library. This agent leverages the existing functionality of Crawl4AI to extract content from websites, filter it, and return it in a structured format.
+A powerful AI agent that can crawl any website using the Crawl4AI library. This agent leverages the existing functionality of Crawl4AI to extract content from websites, filter it, and return it in a structured format. The agent now includes true AI capabilities that enhance the crawling process with intelligent decision-making.
 
 ## Features
 
@@ -10,6 +10,10 @@ A powerful AI agent that can crawl any website using the Crawl4AI library. This 
 - **Data Extraction**: Extract structured data using LLMs or CSS selectors
 - **Custom JavaScript**: Execute custom JavaScript code on pages during crawling
 - **Flexible Configuration**: Configure all aspects of the crawling process
+- **AI-Powered Analysis**: Automatically analyze websites to determine optimal crawling strategies
+- **Content Enhancement**: Use AI to improve and organize extracted content
+- **Knowledge Retention**: Store and retrieve information from past crawls
+- **Question Answering**: Ask questions about crawled content and get AI-generated answers
 
 ## Installation
 
@@ -20,11 +24,24 @@ A powerful AI agent that can crawl any website using the Crawl4AI library. This 
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables (optional):
+3. Set up environment variables:
    - Copy `.env.example` to `.env`
-   - Add your API keys for LLM providers if you plan to use LLM extraction
+   - Add your OpenAI API key to enable AI agent capabilities:
+     ```
+     OPENAI_API_KEY=your_openai_api_key_here
+     ```
 
 ## Usage
+
+### Web Interface
+
+The easiest way to use Crawl4AI Agent is through its web interface:
+
+```bash
+python dev.py
+```
+
+This will start a Streamlit app accessible at http://localhost:8501 where you can configure all crawling options and use the AI agent features.
 
 ### Command Line Interface
 
@@ -41,36 +58,45 @@ python crawl_agent.py https://example.com --headless --content-filter=Pruning
 - `--verbose`: Enable verbose output
 - `--cache-mode`: Cache mode (Enabled, Bypass, Disabled)
 
+#### AI Agent Options
+
+- `--use-ai-agent`: Enable AI agent capabilities
+- `--analyze-website`: Analyze website structure to determine optimal crawling strategy
+- `--enhance-content`: Improve and organize extracted content
+- `--store-results`: Store crawl results for future reference
+- `--ai-question`: Ask a question about the crawled content
+
 #### Content Filter Options
 
 - `--content-filter`: Content filter type (Pruning, BM25)
 - `--threshold`: Pruning threshold (default: 0.48)
-- `--threshold-type`: Threshold type (fixed, auto)
 - `--min-word-threshold`: Min word threshold
 - `--user-query`: BM25 query
-- `--bm25-threshold`: BM25 threshold (default: 1.0)
+- `--bm25-threshold`: BM25 threshold (default: 0.1)
 
 #### Extraction Options
 
-- `--extraction-type`: Extraction type (None, LLM, JSON CSS)
-- `--llm-provider`: LLM provider
-- `--llm-api-key`: LLM API key
-- `--llm-instruction`: LLM instruction
-- `--css-schema`: CSS schema (JSON)
+- `--extraction-strategy`: Extraction strategy (Basic, LLM, JSON CSS)
+- `--css-selector`: CSS selector for JSON CSS extraction
 
 #### Deep Crawling Options
 
 - `--deep-crawl`: Enable deep crawling
-- `--crawl-strategy`: Crawling strategy (BFS (Breadth-First), DFS (Depth-First), Best-First)
+- `--crawl-strategy`: Crawling strategy (BFS, DFS, Best-First)
 - `--max-depth`: Maximum depth (default: 2)
 - `--max-pages`: Maximum pages (default: 10)
-- `--include-external`: Include external links
-- `--keywords`: Keywords (comma-separated)
-- `--keyword-weight`: Keyword weight (default: 0.7)
+- `--follow-external-links`: Follow external links
 
-#### Custom JavaScript
+#### JavaScript & Output Options
 
 - `--js-code`: Custom JavaScript code to execute on the page
+- `--delay-before-return-html`: Delay before returning HTML (seconds)
+- `--wait-for`: CSS selector or XPath to wait for
+- `--magic`: Enable magic mode for better extraction
+- `--remove-overlay-elements`: Remove overlay elements
+- `--save-raw-markdown`: Save raw markdown to file
+- `--word-count-threshold`: Word count threshold
+- `--excluded-tags`: Excluded tags (e.g., script, style)
 
 ### Python API
 
@@ -86,14 +112,22 @@ async def main():
         headless=True,
         content_filter_type="Pruning",
         threshold=0.48,
-        enable_deep_crawl=True,
-        crawl_strategy="BFS (Breadth-First)",
+        deep_crawl=True,
+        deep_crawl_strategy="BFS",
         max_depth=2,
-        max_pages=10
+        max_pages=10,
+        # AI Agent features
+        use_ai_agent=True,
+        analyze_website=True,
+        enhance_content=True,
+        ai_question="What is the main topic of this website?"
     )
     
     result = await crawl_url(config)
-    print(result)
+    
+    # Access AI-enhanced content and answers
+    print(result["ai_enhanced_content"])
+    print(result["ai_answer"])
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -101,12 +135,13 @@ if __name__ == "__main__":
 
 ## Output
 
-The agent saves the extracted content to markdown files and returns a structured result with:
+The agent returns a structured result with:
 
-- Success status
-- Paths to the saved markdown files
-- Metadata about the crawled pages
-- Extracted structured data (if extraction was configured)
+- Raw and processed markdown content
+- AI-enhanced content
+- Answers to questions about the content
+- Crawl statistics
+- Success status and any error information
 
 ## Examples
 
@@ -116,22 +151,22 @@ The agent saves the extracted content to markdown files and returns a structured
 python crawl_agent.py https://example.com
 ```
 
-### Deep Crawling with BFS Strategy
+### Using the AI Agent
 
 ```bash
-python crawl_agent.py https://example.com --deep-crawl --crawl-strategy="BFS (Breadth-First)" --max-depth=3 --max-pages=20
+python crawl_agent.py https://example.com --use-ai-agent --analyze-website --enhance-content --ai-question="What are the main products offered on this website?"
 ```
 
-### Using LLM Extraction
+### Deep Crawling with AI-Powered Link Prioritization
 
 ```bash
-python crawl_agent.py https://example.com --extraction-type=LLM --llm-provider="openai/gpt-4o" --llm-instruction="Extract the main article content and key points"
+python crawl_agent.py https://example.com --deep-crawl --crawl-strategy="Best-First" --max-depth=3 --max-pages=20 --use-ai-agent
 ```
 
-### Using Custom JavaScript
+### Content Enhancement with Proxy Support
 
 ```bash
-python crawl_agent.py https://example.com --js-code="window.scrollTo(0, document.body.scrollHeight); await new Promise(r => setTimeout(r, 2000));"
+python crawl_agent.py https://example.com --use-ai-agent --enhance-content --use-proxy --proxy-server="http://proxy.example.com:8080"
 ```
 
 ## License

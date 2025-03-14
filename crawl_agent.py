@@ -25,7 +25,7 @@ class CrawlConfig(BaseModel):
     url: str
     headless: bool = True
     verbose: bool = False
-    cache_mode: str = "Enabled"  # "Enabled", "Bypass", "Disabled"
+    cache_mode: str = "ENABLED"  # "ENABLED", "BYPASS", "DISABLED", "READ_ONLY", "WRITE_ONLY"
     content_filter_type: str = "Pruning"  # "Pruning", "BM25"
     
     # Proxy settings
@@ -40,27 +40,38 @@ class CrawlConfig(BaseModel):
     min_word_threshold: int = 0
     
     # BM25 filter options
-    user_query: Optional[str] = None
-    bm25_threshold: float = 1.0
+    user_query: str = ""
+    bm25_threshold: float = 0.1
     
-    # Extraction options
-    extraction_type: Optional[str] = None  # "None", "LLM", "JSON CSS"
-    llm_provider: Optional[str] = None
-    llm_api_key: Optional[str] = None
-    llm_instruction: Optional[str] = None
-    css_schema: Optional[str] = None
+    # AI agent options
+    use_ai_agent: bool = False
+    analyze_website: bool = False
+    enhance_content: bool = False
+    store_results: bool = True
+    ai_question: str = ""
     
-    # Deep crawling options
-    enable_deep_crawl: bool = False
-    crawl_strategy: Optional[str] = None  # "BFS (Breadth-First)", "DFS (Depth-First)", "Best-First"
+    # Deep crawl options
+    deep_crawl: bool = False
+    deep_crawl_strategy: str = "BFS"  # "BFS", "DFS", "Best-First"
     max_depth: int = 2
     max_pages: int = 10
-    include_external: bool = False
-    keywords: Optional[str] = None
-    keyword_weight: float = 0.7
+    follow_external_links: bool = False
     
-    # Custom JavaScript
-    js_code: Optional[str] = None
+    # Extraction strategy
+    extraction_strategy: str = "Basic"  # "Basic", "LLM", "JSON CSS"
+    css_selector: str = ""
+    
+    # JavaScript execution
+    js_code: str = ""
+    delay_before_return_html: int = 0
+    wait_for: str = ""  # CSS selector or XPath
+    
+    # Output options
+    remove_overlay_elements: bool = False
+    save_raw_markdown: bool = False
+    magic: bool = False  # Magic mode for better extraction
+    word_count_threshold: int = 0
+    excluded_tags: List[str] = []
 
 def is_meaningful_content(content: str, min_length: int = 50, is_deep_crawl: bool = False) -> bool:
     """
@@ -149,14 +160,41 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         # Set proxy in browser config
         browser_config.proxy = proxy_config
     
-    # Cache mode mapping
-    cache_mode_map = {
-        "Enabled": CacheMode.ENABLED,
-        "Bypass": CacheMode.BYPASS,
-        "Disabled": CacheMode.DISABLED
-    }
+    # Initialize AI agent if enabled
+    if config.use_ai_agent:
+        # Wrap AI agent initialization in try/except to ensure basic crawling still works
+        try:
+            from ai_agent import ai_agent
+            has_ai_agent = True
+        except Exception as e:
+            logger.error(f"Error initializing AI agent module: {e}")
+            has_ai_agent = False
+        
+        # Analyze website to determine optimal crawling strategy
+        if config.analyze_website and has_ai_agent:
+            logger.info(f"Analyzing website {config.url} with AI agent...")
+            try:
+                strategy = await ai_agent.analyze_website(config.url)
+                if strategy:
+                    logger.info(f"AI agent recommended strategy: {strategy.model_dump()}")
+                    # Apply AI agent recommendations
+                    config.deep_crawl = True
+                    config.deep_crawl_strategy = strategy.strategy_type
+                    config.max_depth = strategy.max_depth
+                    config.max_pages = strategy.max_pages
+                    config.content_filter_type = strategy.content_filter_type
+                    config.threshold = strategy.threshold
+                    # If keywords are provided, use best-first strategy
+                    if strategy.focus_keywords:
+                        config.deep_crawl_strategy = "Best-First"
+                        logger.info(f"Using focus keywords: {strategy.focus_keywords}")
+            except Exception as e:
+                logger.error(f"Error analyzing website with AI agent: {e}")
+    else:
+        has_ai_agent = False
     
-    # Set up the content filter based on selection
+    # Configure content filter
+    content_filter = None
     if config.content_filter_type == "Pruning":
         content_filter = PruningContentFilter(
             threshold=config.threshold,
@@ -164,338 +202,332 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
             min_word_threshold=config.min_word_threshold
         )
         logger.info(f"Using Pruning content filter with threshold={config.threshold}")
-    else:  # BM25
+    elif config.content_filter_type == "BM25" and config.user_query:
         content_filter = BM25ContentFilter(
-            user_query=config.user_query,
-            bm25_threshold=config.bm25_threshold
+            query=config.user_query,
+            threshold=config.bm25_threshold
         )
         logger.info(f"Using BM25 content filter with query='{config.user_query}'")
     
     # Configure extraction strategy
     extraction_strategy = None
-    if config.extraction_type == "LLM" and config.llm_api_key and config.llm_instruction:
-        from crawl4ai import LLMConfig
-        extraction_strategy = LLMExtractionStrategy(
-            llm_config=LLMConfig(provider=config.llm_provider, api_token=config.llm_api_key),
-            instruction=config.llm_instruction
-        )
-        logger.info(f"Using LLM extraction strategy with provider={config.llm_provider}")
-    elif config.extraction_type == "JSON CSS" and config.css_schema:
+    if config.extraction_strategy == "LLM":
+        # Use LLM extraction if available
+        pass
+    elif config.extraction_strategy == "JSON CSS" and config.css_selector:
         try:
-            schema = json.loads(config.css_schema)
+            schema = json.loads(config.css_selector)
             extraction_strategy = JsonCssExtractionStrategy(schema=schema)
             logger.info("Using JSON CSS extraction strategy")
-        except json.JSONDecodeError:
-            logger.error("Invalid JSON schema")
-            return {"error": "Invalid JSON schema"}
+        except Exception as e:
+            logger.error(f"Error parsing CSS schema: {e}")
     
     # Setup deep crawling strategy if enabled
     deep_crawl_strategy = None
-    if config.enable_deep_crawl:
-        if config.crawl_strategy == "BFS (Breadth-First)":
+    if config.deep_crawl:
+        if config.deep_crawl_strategy == "BFS":
             deep_crawl_strategy = BFSDeepCrawlStrategy(
                 max_depth=config.max_depth,
-                include_external=config.include_external,
+                include_external=config.follow_external_links,
                 max_pages=config.max_pages
             )
             logger.info(f"Using BFS deep crawl strategy with max_depth={config.max_depth}, max_pages={config.max_pages}")
-        elif config.crawl_strategy == "DFS (Depth-First)":
+        elif config.deep_crawl_strategy == "DFS":
             deep_crawl_strategy = DFSDeepCrawlStrategy(
                 max_depth=config.max_depth,
-                include_external=config.include_external,
+                include_external=config.follow_external_links,
                 max_pages=config.max_pages
             )
             logger.info(f"Using DFS deep crawl strategy with max_depth={config.max_depth}, max_pages={config.max_pages}")
-        elif config.crawl_strategy == "Best-First" and config.keywords:
-            keyword_list = [k.strip() for k in config.keywords.split(",") if k.strip()]
-            scorer = KeywordRelevanceScorer(
-                keywords=keyword_list,
-                weight=config.keyword_weight
-            )
+        elif config.deep_crawl_strategy == "Best-First" and config.use_ai_agent and has_ai_agent:
+            # Use AI agent to score URLs if available
+            class AILinkScorer:
+                def __init__(self, agent, query):
+                    self.agent = agent
+                    self.query = query
+                
+                async def score(self, page_url, links):
+                    scored_links = self.agent.analyze_link_relevance(page_url, links, self.query)
+                    return scored_links
+            
             deep_crawl_strategy = BestFirstCrawlingStrategy(
                 max_depth=config.max_depth,
-                include_external=config.include_external,
+                include_external=config.follow_external_links,
                 max_pages=config.max_pages,
-                url_scorer=scorer
+                url_scorer=AILinkScorer(ai_agent, config.user_query)
             )
-            logger.info(f"Using Best-First deep crawl strategy with keywords={keyword_list}")
+            logger.info(f"Using AI-powered Best-First deep crawl strategy")
+        # Fallback to regular BFS if Best-First is selected but AI agent is not available
+        elif config.deep_crawl_strategy == "Best-First":
+            logger.warning("Best-First strategy selected but AI agent not available. Using BFS instead.")
+            deep_crawl_strategy = BFSDeepCrawlStrategy(
+                max_depth=config.max_depth,
+                include_external=config.follow_external_links,
+                max_pages=config.max_pages
+            )
+            logger.info(f"Using BFS deep crawl strategy with max_depth={config.max_depth}, max_pages={config.max_pages}")
+    
+    # Map string cache modes to CacheMode enum values
+    cache_mode_map = {
+        "ENABLED": CacheMode.ENABLED,
+        "DISABLED": CacheMode.DISABLED,
+        "BYPASS": CacheMode.BYPASS,
+        "READ_ONLY": CacheMode.READ_ONLY,
+        "WRITE_ONLY": CacheMode.WRITE_ONLY
+    }
+    
+    # Get the appropriate CacheMode enum value, defaulting to ENABLED
+    cache_mode_enum = cache_mode_map.get(config.cache_mode, CacheMode.ENABLED)
     
     # Setup the crawler run configuration
-    run_config = CrawlerRunConfig(
-        cache_mode=cache_mode_map[config.cache_mode],
-        markdown_generator=DefaultMarkdownGenerator(content_filter=content_filter),
+    crawler_run_config = CrawlerRunConfig(
+        cache_mode=cache_mode_enum,
+        markdown_generator=DefaultMarkdownGenerator(),
         extraction_strategy=extraction_strategy,
         deep_crawl_strategy=deep_crawl_strategy,
         scraping_strategy=LXMLWebScrapingStrategy(),
         stream=False,  # Use non-streaming mode for deep crawling to avoid context variable errors
-        # Add these parameters to improve stability
-        wait_for=None,  # Don't use wait_for
-        delay_before_return_html=5.0,  # Wait 5 seconds before returning HTML
-        word_count_threshold=0,
-        excluded_tags=["script", "style", "svg", "path", "noscript"],
-        magic=True  # Enable magic mode for better compatibility
+        wait_for=config.wait_for,
+        delay_before_return_html=config.delay_before_return_html,
+        word_count_threshold=config.word_count_threshold,
+        excluded_tags=config.excluded_tags,
+        magic=config.magic,
+        remove_overlay_elements=config.remove_overlay_elements
     )
     
-    # Add custom JavaScript if provided
-    if config.js_code:
-        run_config.js_code = [config.js_code]
-        logger.info("Added custom JavaScript code")
+    # Set content filter if needed - set it as an attribute after initialization
+    if content_filter:
+        setattr(crawler_run_config, 'content_filter', content_filter)
     
-    # Run the crawler
+    # Results container
+    result = {
+        "url": config.url,
+        "crawl_time": time.time(),
+        "status": "failed",
+        "raw_content": "",
+        "fit_content": "",
+        "stats": {},
+        "ai_enhanced_content": "",
+        "ai_answer": ""
+    }
+    
+    # Execute the crawl
     async with AsyncWebCrawler(config=browser_config) as crawler:
         try:
-            if config.enable_deep_crawl:
+            if config.deep_crawl:
                 try:
                     # Use a single crawler for deep crawling in non-streaming mode
                     logger.info(f"Starting deep crawl of {config.url}...")
+                    crawl_results = await crawler.arun(config.url, crawler_run_config)
                     
-                    # Use a single await call to get all results
-                    try:
-                        results = await crawler.arun(url=config.url, config=run_config)
-                    except Exception as e:
-                        logger.error(f"Error during deep crawling: {str(e)}")
-                        # Create a simple mock result for testing
-                        from crawl4ai.models import CrawlResult, Markdown
-                        results = [CrawlResult(url=config.url, markdown=Markdown(
-                            raw_markdown=f"# Example Domain\n\nThis is a mock result for {config.url} created because the actual crawling failed.\n\nError: {str(e)}",
-                            fit_markdown=f"# Example Domain\n\nThis is a mock result for {config.url} created because the actual crawling failed.\n\nError: {str(e)}"))]
-                    
-                    if not results:
-                        logger.error("No results returned from deep crawling")
-                        return {"error": "No results returned from deep crawling"}
+                    if crawl_results:
+                        logger.info(f"Deep crawl complete. Retrieved results.")
                         
-                    # Check if results is a list (non-streaming mode)
-                    if not isinstance(results, list):
-                        results = [results]  # Convert to list if it's a single result
+                        # Combine all the raw markdown from successful pages
+                        combined_raw = ""
+                        combined_fit = ""
                         
-                    logger.info(f"Deep crawl complete. Retrieved {len(results)} pages.")
-                    
-                    # Filter to max_pages if needed
-                    if len(results) > config.max_pages:
-                        logger.warning(f"Limiting results to {config.max_pages} pages (got {len(results)})")
-                        results = results[:config.max_pages]
-                    
-                    # Track crawl statistics
-                    total_pages = len(results)
-                    filtered_pages = 0
-                    max_depth_reached = 0
-                    
-                    # Update max depth reached
-                    for r in results:
-                        if hasattr(r, 'metadata') and 'depth' in r.metadata:
-                            depth = r.metadata.get('depth', 0)
-                            max_depth_reached = max(max_depth_reached, depth)
-                    
-                    # Only filter out pages with HTTP errors, keep all content pages even if small
-                    valid_results = []
-                    for r in results:
-                        # Check only for HTTP error status, not content length
-                        is_error = False
-                        
-                        # Check for HTTP error status in metadata if available
-                        if hasattr(r, 'metadata') and 'status' in r.metadata:
-                            status = r.metadata.get('status')
-                            if isinstance(status, int) and status >= 400:  # HTTP error codes
-                                is_error = True
-                                logger.warning(f"Filtering out page with HTTP error status {status}: {r.url}")
-                        
-                        # Ensure the page has some markdown structure
-                        if not hasattr(r, 'markdown') or not r.markdown:
-                            # Create empty markdown structure if needed
-                            from crawl4ai.models import Markdown
-                            r.markdown = Markdown(
-                                raw_markdown=f"# {r.url}\n\n*This page was crawled but returned no content.*",
-                                fit_markdown=f"# {r.url}\n\n*This page was crawled but returned no content.*"
-                            )
-                            logger.warning(f"Adding placeholder content for page with no markdown: {r.url}")
-                        
-                        # Include all pages except those with HTTP errors
-                        if not is_error:
-                            valid_results.append(r)
+                        # Check if result is a single CrawlResult or a list
+                        if isinstance(crawl_results, list):
+                            pages = crawl_results
                         else:
-                            # Even for error pages, include them with a note
-                            if hasattr(r, 'markdown'):
-                                r.markdown.raw_markdown = f"# {r.url}\n\n*This page returned an HTTP error status {status}.*"
-                                r.markdown.fit_markdown = r.markdown.raw_markdown
-                                valid_results.append(r)
-                                logger.info(f"Including error page with note: {r.url}")
-                    
-                    # Track filtering statistics
-                    filtered_pages = total_pages - len(valid_results)
-                    if filtered_pages > 0:
-                        logger.info(f"Filtered out {filtered_pages} error pages. Processing {len(valid_results)} valid pages.")
-                    
-                    # Use the original list if no pages were filtered
-                    if len(valid_results) > 0:
-                        results = valid_results
-                    
-                    # Abort if all pages were filtered
-                    if len(results) == 0:
-                        logger.error("No valid pages found after filtering. Try adjusting your filters or crawling a different URL.")
-                        return {"error": "No valid pages found after filtering"}
-                        
-                    # Initialize collections for aggregating data
-                    total_links = set()
-                    total_images = set()
-                    
-                    # Create a table of contents
-                    toc = "# Table of Contents\n\n"
-                    for i, r in enumerate(results, 1):
-                        page_anchor = f"page-{i}"
-                        page_title = r.url.replace('https://', '').replace('http://', '')
-                        # Add depth information if available
-                        depth = r.metadata.get('depth', 0) if hasattr(r, 'metadata') else 0
-                        toc += f"{i}. [Page {i}: {page_title} (Depth: {depth})](#{page_anchor})\n"
-                    
-                    # Collect all page content with proper formatting
-                    all_pages_content = []
-                    all_pages_fit_content = []
-                    
-                    # Process each result to build content with better handling of empty content
-                    for i, r in enumerate(results, 1):
-                        # Create a valid markdown anchor
-                        page_anchor = f"page-{i}"
-                        depth = r.metadata.get('depth', 0) if hasattr(r, 'metadata') else 0
-                        
-                        # Add page header with URL and separator
-                        page_header = f"\n\n## <a id=\"{page_anchor}\"></a>Page {i}: {r.url} (Depth: {depth})\n\n"
-                        page_separator = f"{'='*80}\n\n"
-                        
-                        # Get raw content with better handling of empty content
-                        if hasattr(r, 'markdown') and r.markdown and hasattr(r.markdown, 'raw_markdown') and r.markdown.raw_markdown:
-                            page_content = r.markdown.raw_markdown.strip()
-                            if page_content:
-                                logger.info(f"Found raw markdown for page {i}: {len(page_content)} chars")
+                            # If it's a single result object, check if it's a container
+                            if hasattr(crawl_results, '_results'):
+                                # It's a CrawlResultContainer
+                                pages = crawl_results._results
                             else:
-                                page_content = f"*This page ({r.url}) was crawled but returned empty content.*"
-                        else:
-                            # Provide more context for pages without content
-                            page_content = f"*This page ({r.url}) was crawled but no content could be extracted.*"
+                                # Single result
+                                pages = [crawl_results]
                         
-                        # Get fit content with similar improvements
-                        if hasattr(r, 'markdown') and r.markdown and hasattr(r.markdown, 'fit_markdown') and r.markdown.fit_markdown:
-                            page_fit_content = r.markdown.fit_markdown.strip()
-                            if not page_fit_content:
-                                page_fit_content = page_content
-                        else:
-                            # Use raw content if fit content is not available
-                            page_fit_content = page_content
+                        logger.info(f"Processing {len(pages)} pages of results.")
                         
-                        # Add to combined content
-                        all_pages_content.append(f"{page_header}{page_separator}{page_content}")
-                        all_pages_fit_content.append(f"{page_header}{page_separator}{page_fit_content}")
-                    
-                        # Collect links from each result
-                        if hasattr(r, 'metadata') and 'links' in r.metadata:
-                            for link in r.metadata['links']:
-                                if 'href' in link:
-                                    total_links.add(link['href'])
+                        for idx, page in enumerate(pages, 1):
+                            # Handle both dictionary-like objects and CrawlResult objects
+                            try:
+                                # Try accessing as CrawlResult object
+                                url = getattr(page, "url", config.url if idx == 1 else "unknown")
+                                # Try to get markdown content (newer version) or raw_markdown (older version)
+                                raw_markdown = getattr(page, "markdown", None)
+                                if raw_markdown is None:
+                                    raw_markdown = getattr(page, "raw_markdown", "")
+                                
+                                # Try to get fit_markdown if it exists
+                                fit_markdown = getattr(page, "fit_markdown", "")
+                            except AttributeError:
+                                # Fall back to dictionary access if needed
+                                url = page.get("url", config.url if idx == 1 else "unknown")
+                                raw_markdown = page.get("markdown", "") or page.get("raw_markdown", "")
+                                fit_markdown = page.get("fit_markdown", "")
+                            
+                            if raw_markdown:
+                                logger.info(f"Found raw markdown for page {idx}: {len(raw_markdown)} chars")
+                                combined_raw += f"\n\n## Page: {url}\n\n{raw_markdown}"
+                            
+                            if fit_markdown:
+                                combined_fit += f"\n\n## Page: {url}\n\n{fit_markdown}"
                         
-                        # Collect images from each result
-                        if hasattr(r, 'metadata') and 'images' in r.metadata:
-                            for img in r.metadata['images']:
-                                if 'src' in img:
-                                    total_images.add(img['src'])
-                    
-                    # Create the final combined content
-                    final_raw = f"{toc}\n\n" + "\n\n".join(all_pages_content)
-                    final_fit = f"{toc}\n\n" + "\n\n".join(all_pages_fit_content)
-                    
-                    # Log the combined content length
-                    logger.info(f"Combined raw markdown length: {len(final_raw)}")
-                    logger.info(f"Combined fit markdown length: {len(final_fit)}")
-                    
-                    # Always return the content if we have it, without additional checks
-                    raw_content = final_raw
-                    fit_content = final_fit
-                    
-                    # Log the generation
-                    logger.info(f"Generated raw markdown content ({len(raw_content)} chars)")
-                    logger.info(f"Generated fit markdown content ({len(fit_content)} chars)")
-                    
-                    # Create a completely new result object instead of trying to modify the existing one
-                    import copy
-                    combined_result = copy.deepcopy(results[0])
-                    
-                    # Update the metadata
-                    combined_result.metadata['total_pages_crawled'] = len(results)
-                    combined_result.metadata['all_pages'] = [r.url for r in results]
-                    combined_result.metadata['links'] = [{'href': link} for link in total_links]
-                    combined_result.metadata['images'] = [{'src': img} for img in total_images]
-                    combined_result.metadata['success'] = True
-                    
-                    # Direct modification of the attributes
-                    if hasattr(combined_result, 'markdown'):
-                        combined_result.markdown.raw_markdown = final_raw
-                        combined_result.markdown.fit_markdown = final_fit
-                    
-                    # Return the combined result
-                    return {
-                        "success": True,
-                        "total_pages": len(results),
-                        "raw_content": raw_content,
-                        "fit_content": fit_content,
-                        "metadata": combined_result.metadata,
-                        "extracted_content": combined_result.extracted_content if hasattr(combined_result, 'extracted_content') else None,
-                        # Add crawl statistics
-                        "crawl_stats": {
-                            "total_pages": total_pages,
-                            "valid_pages": len(results),
-                            "filtered_pages": filtered_pages,
-                            "max_depth_reached": max_depth_reached
+                        if combined_raw:
+                            logger.info(f"Combined raw markdown length: {len(combined_raw)}")
+                            result["raw_content"] = combined_raw
+                        
+                        if combined_fit:
+                            logger.info(f"Combined fit markdown length: {len(combined_fit)}")
+                            result["fit_content"] = combined_fit
+                        
+                        # Generate stats
+                        result["stats"] = {
+                            "pages_crawled": len(pages),
+                            "successful_pages": sum(1 for p in pages if (hasattr(p, "markdown") and p.markdown) or 
+                                                   (hasattr(p, "raw_markdown") and p.raw_markdown) or 
+                                                   (hasattr(p, "get") and (p.get("markdown") or p.get("raw_markdown")))),
+                            "total_content_length": len(combined_raw)
                         }
-                    }
+                        
+                        # Use AI agent for content enhancement if enabled
+                        if config.use_ai_agent and config.enhance_content and combined_raw and has_ai_agent:
+                            try:
+                                logger.info("Enhancing content with AI agent...")
+                                enhanced_content = await ai_agent.enhance_content(combined_raw, config.user_query)
+                                result["ai_enhanced_content"] = enhanced_content
+                                logger.info(f"AI enhanced content length: {len(enhanced_content)}")
+                            except Exception as e:
+                                logger.error(f"Error enhancing content with AI agent: {e}")
+                        
+                        # Use AI agent to answer question if provided
+                        if config.use_ai_agent and config.ai_question and combined_raw and has_ai_agent:
+                            try:
+                                logger.info(f"Answering question with AI agent: {config.ai_question}")
+                                answer = await ai_agent.answer_question(config.ai_question, combined_raw)
+                                result["ai_answer"] = answer
+                                logger.info(f"AI answer length: {len(answer)}")
+                            except Exception as e:
+                                logger.error(f"Error answering question with AI agent: {e}")
+                        
+                        # Store results in AI agent memory if enabled
+                        if config.use_ai_agent and config.store_results and combined_raw and has_ai_agent:
+                            try:
+                                ai_agent.store_crawl_results(
+                                    config.url,
+                                    combined_raw,
+                                    {
+                                        "crawl_time": result["crawl_time"],
+                                        "pages_crawled": len(pages),
+                                        "user_query": config.user_query
+                                    }
+                                )
+                                logger.info("Stored crawl results in AI agent memory")
+                            except Exception as e:
+                                logger.error(f"Error storing crawl results in AI agent memory: {e}")
+                        
+                        result["status"] = "success"
+                        logger.info(f"Generated raw markdown content ({len(combined_raw)} chars)")
+                        logger.info(f"Generated fit markdown content ({len(combined_fit)} chars)")
+                    else:
+                        logger.warning("No pages retrieved from deep crawl")
+                
                 except Exception as e:
-                    logger.error(f"Error during deep crawling: {str(e)}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    return {"error": f"Error during deep crawling: {str(e)}"}
+                    logger.error(f"Error during deep crawl: {e}")
             else:
-                try:
-                    result = await crawler.arun(url=config.url, config=run_config)
-                except Exception as e:
-                    logger.error(f"Error during crawling: {str(e)}")
-                    # Create a simple mock result for testing
-                    from crawl4ai.models import CrawlResult, Markdown
-                    result = CrawlResult(url=config.url, markdown=Markdown(
-                        raw_markdown=f"# Example Domain\n\nThis is a mock result for {config.url} created because the actual crawling failed.\n\nError: {str(e)}",
-                        fit_markdown=f"# Example Domain\n\nThis is a mock result for {config.url} created because the actual crawling failed.\n\nError: {str(e)}"))
+                # Single page crawl
+                crawler_result = await crawler.arun(config.url, crawler_run_config)
                 
-                # Check if result is None or doesn't have markdown attribute
-                if result is None or not hasattr(result, 'markdown') or result.markdown is None:
-                    logger.error("No valid result returned from crawling")
-                    return {"error": "No valid result returned from crawling"}
-                
-                # Check if markdown attributes exist
-                if not hasattr(result.markdown, 'raw_markdown') or not hasattr(result.markdown, 'fit_markdown'):
-                    logger.error("Result doesn't have expected markdown attributes")
-                    return {"error": "Result doesn't have expected markdown attributes"}
-                
-                # Instead of saving to files, just return the content in the response
-                timestamp = time.strftime('%Y%m%d_%H%M%S')
-                raw_content = None
-                fit_content = None
-                
-                if is_meaningful_content(result.markdown.raw_markdown):
-                    raw_content = result.markdown.raw_markdown
-                    # Don't save to file, just log
-                    logger.info(f"Generated raw markdown content ({len(raw_content)} chars)")
-                
-                if is_meaningful_content(result.markdown.fit_markdown):
-                    fit_content = result.markdown.fit_markdown
-                    # Don't save to file, just log
-                    logger.info(f"Generated fit markdown content ({len(fit_content)} chars)")
-                
-                return {
-                    "success": True,
-                    "raw_content": raw_content,
-                    "fit_content": fit_content,
-                    "metadata": result.metadata,
-                    "extracted_content": result.extracted_content if hasattr(result, 'extracted_content') else None
-                }
+                # Handle different types of results (CrawlResultContainer, CrawlResult, dict)
+                if crawler_result:
+                    raw_content = ""
+                    fit_content = ""
+                    
+                    # Check if it's a container with _results
+                    if hasattr(crawler_result, '_results') and crawler_result._results:
+                        # Use the first result in the container
+                        page = crawler_result._results[0]
+                        try:
+                            # Try to access as a CrawlResult object
+                            raw_content = getattr(page, "markdown", None)
+                            if raw_content is None:
+                                raw_content = getattr(page, "raw_markdown", "")
+                            fit_content = getattr(page, "fit_markdown", "")
+                        except AttributeError:
+                            logger.warning(f"Unexpected result structure in container")
+                    else:
+                        # Try to access as a direct CrawlResult object
+                        try:
+                            raw_content = getattr(crawler_result, "markdown", None)
+                            if raw_content is None:
+                                raw_content = getattr(crawler_result, "raw_markdown", "")
+                            fit_content = getattr(crawler_result, "fit_markdown", "")
+                        except AttributeError:
+                            # Fall back to dictionary access
+                            if isinstance(crawler_result, dict):
+                                raw_content = crawler_result.get("markdown", "") or crawler_result.get("raw_markdown", "")
+                                fit_content = crawler_result.get("fit_markdown", "")
+                            else:
+                                logger.warning(f"Unexpected result type: {type(crawler_result)}")
+                    
+                    if raw_content:
+                        result["raw_content"] = raw_content
+                        logger.info(f"Generated raw markdown content ({len(raw_content)} chars)")
+                    
+                    if fit_content:
+                        result["fit_content"] = fit_content
+                    
+                    # Add stats to the result
+                    result["stats"] = {
+                        "pages_crawled": 1,
+                        "successful_pages": 1 if raw_content else 0,
+                        "total_content_length": len(raw_content)
+                    }
+                    
+                    # Use AI agent for content enhancement if enabled
+                    if config.use_ai_agent and config.enhance_content and raw_content and has_ai_agent:
+                        try:
+                            logger.info("Enhancing content with AI agent...")
+                            enhanced_content = await ai_agent.enhance_content(raw_content, config.user_query)
+                            result["ai_enhanced_content"] = enhanced_content
+                            logger.info(f"AI enhanced content length: {len(enhanced_content)}")
+                        except Exception as e:
+                            logger.error(f"Error enhancing content with AI agent: {e}")
+                    
+                    # Use AI agent to answer question if provided
+                    if config.use_ai_agent and config.ai_question and raw_content and has_ai_agent:
+                        try:
+                            logger.info(f"Answering question with AI agent: {config.ai_question}")
+                            answer = await ai_agent.answer_question(config.ai_question, raw_content)
+                            result["ai_answer"] = answer
+                            logger.info(f"AI answer length: {len(answer)}")
+                        except Exception as e:
+                            logger.error(f"Error answering question with AI agent: {e}")
+                    
+                    # Store results in AI agent memory if enabled
+                    if config.use_ai_agent and config.store_results and raw_content and has_ai_agent:
+                        try:
+                            ai_agent.store_crawl_results(
+                                config.url,
+                                raw_content,
+                                {
+                                    "crawl_time": result["crawl_time"],
+                                    "user_query": config.user_query
+                                }
+                            )
+                            logger.info("Stored crawl results in AI agent memory")
+                        except Exception as e:
+                            logger.error(f"Error storing crawl results in AI agent memory: {e}")
+                    
+                    result["status"] = "success"
+                else:
+                    logger.warning("No content retrieved from URL")
+            
+            # Save raw markdown to file if requested
+            if config.save_raw_markdown and result["raw_content"]:
+                filename = f"crawl4ai_raw_{time.strftime('%Y%m%d_%H%M%S')}.md"
+                with open(filename, "w", encoding="utf-8") as f:
+                    f.write(result["raw_content"])
+                logger.info(f"Saved raw markdown to {filename}")
+        
         except Exception as e:
-            logger.error(f"Error during crawling: {str(e)}")
-            return {"error": f"Error during crawling: {str(e)}"}
+            logger.error(f"Error during crawl: {e}")
+            result["error"] = str(e)
+    
+    return result
 
 def parse_args():
     """Parse command line arguments."""
@@ -505,7 +537,7 @@ def parse_args():
     parser.add_argument("url", help="URL to crawl")
     parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
-    parser.add_argument("--cache-mode", choices=["Enabled", "Bypass", "Disabled"], default="Enabled", help="Cache mode")
+    parser.add_argument("--cache-mode", choices=["ENABLED", "BYPASS", "DISABLED", "READ_ONLY", "WRITE_ONLY"], default="ENABLED", help="Cache mode")
     
     # Content filter arguments
     parser.add_argument("--content-filter", choices=["Pruning", "BM25"], default="Pruning", help="Content filter type")
@@ -513,26 +545,37 @@ def parse_args():
     parser.add_argument("--threshold-type", choices=["fixed", "auto"], default="fixed", help="Threshold type")
     parser.add_argument("--min-word-threshold", type=int, default=0, help="Min word threshold")
     parser.add_argument("--user-query", help="BM25 query")
-    parser.add_argument("--bm25-threshold", type=float, default=1.0, help="BM25 threshold")
+    parser.add_argument("--bm25-threshold", type=float, default=0.1, help="BM25 threshold")
     
-    # Extraction arguments
-    parser.add_argument("--extraction-type", choices=["None", "LLM", "JSON CSS"], help="Extraction type")
-    parser.add_argument("--llm-provider", help="LLM provider")
-    parser.add_argument("--llm-api-key", help="LLM API key")
-    parser.add_argument("--llm-instruction", help="LLM instruction")
-    parser.add_argument("--css-schema", help="CSS schema (JSON)")
+    # AI agent arguments
+    parser.add_argument("--use-ai-agent", action="store_true", help="Enable AI agent")
+    parser.add_argument("--analyze-website", action="store_true", help="Analyze website")
+    parser.add_argument("--enhance-content", action="store_true", help="Enhance content")
+    parser.add_argument("--store-results", action="store_true", help="Store results")
+    parser.add_argument("--ai-question", help="AI question")
     
     # Deep crawling arguments
     parser.add_argument("--deep-crawl", action="store_true", help="Enable deep crawling")
-    parser.add_argument("--crawl-strategy", choices=["BFS (Breadth-First)", "DFS (Depth-First)", "Best-First"], help="Crawling strategy")
+    parser.add_argument("--crawl-strategy", choices=["BFS", "DFS", "Best-First"], help="Crawling strategy")
     parser.add_argument("--max-depth", type=int, default=2, help="Maximum depth")
     parser.add_argument("--max-pages", type=int, default=10, help="Maximum pages")
-    parser.add_argument("--include-external", action="store_true", help="Include external links")
-    parser.add_argument("--keywords", help="Keywords (comma-separated)")
-    parser.add_argument("--keyword-weight", type=float, default=0.7, help="Keyword weight")
+    parser.add_argument("--follow-external-links", action="store_true", help="Follow external links")
     
-    # Custom JavaScript
+    # Extraction strategy
+    parser.add_argument("--extraction-strategy", choices=["Basic", "LLM", "JSON CSS"], help="Extraction strategy")
+    parser.add_argument("--css-selector", help="CSS selector")
+    
+    # JavaScript execution
     parser.add_argument("--js-code", help="Custom JavaScript code")
+    parser.add_argument("--delay-before-return-html", type=int, default=0, help="Delay before returning HTML")
+    parser.add_argument("--wait-for", help="CSS selector or XPath to wait for")
+    
+    # Output options
+    parser.add_argument("--remove-overlay-elements", action="store_true", help="Remove overlay elements")
+    parser.add_argument("--save-raw-markdown", action="store_true", help="Save raw markdown")
+    parser.add_argument("--magic", action="store_true", help="Enable magic mode")
+    parser.add_argument("--word-count-threshold", type=int, default=0, help="Word count threshold")
+    parser.add_argument("--excluded-tags", nargs="+", help="Excluded tags")
     
     return parser.parse_args()
 
@@ -552,19 +595,26 @@ async def main():
         min_word_threshold=args.min_word_threshold,
         user_query=args.user_query,
         bm25_threshold=args.bm25_threshold,
-        extraction_type=args.extraction_type,
-        llm_provider=args.llm_provider,
-        llm_api_key=args.llm_api_key or os.environ.get("LLM_API_KEY"),
-        llm_instruction=args.llm_instruction,
-        css_schema=args.css_schema,
-        enable_deep_crawl=args.deep_crawl,
-        crawl_strategy=args.crawl_strategy,
+        extraction_strategy=args.extraction_strategy,
+        css_selector=args.css_selector,
+        deep_crawl=args.deep_crawl,
+        deep_crawl_strategy=args.crawl_strategy,
         max_depth=args.max_depth,
         max_pages=args.max_pages,
-        include_external=args.include_external,
-        keywords=args.keywords,
-        keyword_weight=args.keyword_weight,
-        js_code=args.js_code
+        follow_external_links=args.follow_external_links,
+        use_ai_agent=args.use_ai_agent,
+        analyze_website=args.analyze_website,
+        enhance_content=args.enhance_content,
+        store_results=args.store_results,
+        ai_question=args.ai_question,
+        js_code=args.js_code,
+        delay_before_return_html=args.delay_before_return_html,
+        wait_for=args.wait_for,
+        remove_overlay_elements=args.remove_overlay_elements,
+        save_raw_markdown=args.save_raw_markdown,
+        magic=args.magic,
+        word_count_threshold=args.word_count_threshold,
+        excluded_tags=args.excluded_tags
     )
     
     # Run the crawl
