@@ -4,8 +4,8 @@ import json
 from typing import Dict, List, Any, Optional, Tuple
 from pydantic import BaseModel, Field
 import openai
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import Chroma
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
 from langchain.schema import Document
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
@@ -30,7 +30,12 @@ class AgentMemory:
         self.collection_name = collection_name
         try:
             self.embeddings = OpenAIEmbeddings()
-            self.vectorstore = Chroma(collection_name=collection_name, embedding_function=self.embeddings)
+            persist_directory = "./.chroma_db"
+            self.vectorstore = Chroma(
+                collection_name=collection_name, 
+                embedding_function=self.embeddings,
+                persist_directory=persist_directory
+            )
             self.is_initialized = True
         except Exception as e:
             logger.error(f"Failed to initialize AgentMemory: {e}")
@@ -99,12 +104,12 @@ class AIAgent:
         # Retrieve relevant knowledge from memory
         relevant_knowledge = self.memory.retrieve_relevant_knowledge(f"Crawling strategy for {url}")
         
-        # Create a prompt for the LLM
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an AI assistant specialized in web crawling.
+        try:
+            system_message = """You are an AI assistant specialized in web crawling.
 Based on the URL and any relevant knowledge, recommend an optimal crawling strategy.
-Consider the website type, likely structure, and content."""),
-            ("user", f"""URL to crawl: {url}
+Consider the website type, likely structure, and content."""
+            
+            user_message = f"""URL to crawl: {url}
             
 Relevant past knowledge: {json.dumps(relevant_knowledge) if relevant_knowledge else "No relevant knowledge found."}
 
@@ -115,12 +120,14 @@ Determine the best crawling strategy, including:
 4. Content filter type and threshold
 5. Important keywords to focus on
 
-Explain your reasoning briefly.""")
-        ])
-        
-        try:
-            response = await self.llm.ainvoke(prompt)
-            # Parse the response to extract the recommended strategy
+Explain your reasoning briefly."""
+            
+            messages = [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ]
+            
+            response = await self.llm.ainvoke(messages)
             strategy = self._parse_strategy_from_response(response.content)
             return strategy
         except Exception as e:
@@ -130,8 +137,6 @@ Explain your reasoning briefly.""")
     def _parse_strategy_from_response(self, response: str) -> CrawlStrategy:
         """Parse the crawl strategy from LLM response."""
         try:
-            # Try to create a more structured prompt in the future
-            # For now, use default strategy with some simple parsing
             strategy = CrawlStrategy()
             
             if "bfs" in response.lower():
@@ -141,29 +146,23 @@ Explain your reasoning briefly.""")
             elif "best-first" in response.lower() or "best first" in response.lower():
                 strategy.strategy_type = "best-first"
             
-            # Extract depth
-            import re
             depth_match = re.search(r"depth[:\s]+(\d+)", response.lower())
             if depth_match:
                 strategy.max_depth = int(depth_match.group(1))
             
-            # Extract pages
             pages_match = re.search(r"pages[:\s]+(\d+)", response.lower())
             if pages_match:
                 strategy.max_pages = int(pages_match.group(1))
             
-            # Extract filter type
             if "pruning" in response.lower():
                 strategy.content_filter_type = "Pruning"
             elif "bm25" in response.lower():
                 strategy.content_filter_type = "BM25"
             
-            # Extract threshold
             threshold_match = re.search(r"threshold[:\s]+(0\.\d+)", response.lower())
             if threshold_match:
                 strategy.threshold = float(threshold_match.group(1))
             
-            # Extract keywords
             keywords_match = re.search(r"keywords[:\s]+\[([^\]]+)\]", response.lower())
             if keywords_match:
                 keywords_str = keywords_match.group(1)
@@ -179,10 +178,11 @@ Explain your reasoning briefly.""")
         if not self.is_llm_available or not raw_content:
             return raw_content
         
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an AI assistant specialized in content enhancement.
-Your task is to improve the scraped content by organizing it, removing noise, and highlighting the most relevant information."""),
-            ("user", f"""Here is the raw content scraped from a website:
+        try:
+            system_message = """You are an AI assistant specialized in content enhancement.
+Your task is to improve the scraped content by organizing it, removing noise, and highlighting the most relevant information."""
+            
+            user_message = f"""Here is the raw content scraped from a website:
 
 {raw_content[:10000]}  # Limit content length to avoid token limits
 
@@ -194,11 +194,14 @@ Enhance this content by:
 3. Highlighting the most relevant parts
 4. Maintaining factual accuracy
 
-Return only the enhanced content, formatted in Markdown.""")
-        ])
-        
-        try:
-            response = await self.llm.ainvoke(prompt)
+Return only the enhanced content, formatted in Markdown."""
+            
+            messages = [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ]
+            
+            response = await self.llm.ainvoke(messages)
             return response.content
         except Exception as e:
             logger.error(f"Failed to enhance content: {e}")
@@ -211,32 +214,25 @@ Return only the enhanced content, formatted in Markdown.""")
         
         scored_links = []
         for link in links:
-            # Simple heuristic scoring until LLM integration is fully implemented
             url = link.get("url", "")
             text = link.get("text", "")
             
-            # Calculate a basic relevance score
-            score = 0.5  # Default mid-range score
+            score = 0.5
             
-            # Increase score if the link text contains query terms
             if query and any(term.lower() in text.lower() for term in query.split()):
                 score += 0.3
             
-            # Decrease score for likely irrelevant pages
             if any(term in url.lower() for term in ["login", "signin", "register", "cart", "privacy", "terms"]):
                 score -= 0.3
             
-            # Prefer deeper content pages over index pages
             url_depth = url.count("/")
             if url_depth > 2:
                 score += 0.1
             
-            # Cap score between 0 and 1
             score = max(0.0, min(1.0, score))
             
             scored_links.append({**link, "relevance_score": score})
         
-        # Sort by relevance score
         return sorted(scored_links, key=lambda x: x.get("relevance_score", 0), reverse=True)
     
     def store_crawl_results(self, url: str, content: str, metadata: Dict[str, Any]) -> None:
@@ -248,25 +244,27 @@ Return only the enhanced content, formatted in Markdown.""")
         if not self.is_llm_available:
             return "AI capabilities unavailable. Please check your OpenAI API key."
         
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an AI assistant specialized in answering questions based on web content.
-Your task is to provide concise, accurate answers based solely on the provided context."""),
-            ("user", f"""Context from crawled content:
-{context[:10000]}  # Limit context length to avoid token limits
+        try:
+            system_message = """You are an AI assistant that answers questions based on provided context.
+Be concise, accurate, and helpful in your responses. Only use the information from the provided context."""
+            
+            user_message = f"""Context information:
+{context[:15000]}  # Limit context to avoid token limits
 
 Question: {question}
 
-Provide a clear and concise answer based only on the information in the context.
-If the context doesn't contain enough information to answer, say "I don't have enough information to answer this question."
-Include relevant quotes from the context to support your answer.""")
-        ])
-        
-        try:
-            response = await self.llm.ainvoke(prompt)
+Please provide a helpful, accurate, and concise answer based only on the information in the context."""
+            
+            messages = [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ]
+            
+            response = await self.llm.ainvoke(messages)
             return response.content
         except Exception as e:
             logger.error(f"Failed to answer question: {e}")
-            return f"Error generating answer: {str(e)}"
+            return f"An error occurred while answering your question: {str(e)}"
 
-# Initialize a global instance
+# Create an instance of the AI agent
 ai_agent = AIAgent() 

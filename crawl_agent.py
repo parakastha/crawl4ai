@@ -166,32 +166,54 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         try:
             from ai_agent import ai_agent
             has_ai_agent = True
+            logger.info("AI agent loaded successfully")
         except Exception as e:
             logger.error(f"Error initializing AI agent module: {e}")
             has_ai_agent = False
-        
-        # Analyze website to determine optimal crawling strategy
-        if config.analyze_website and has_ai_agent:
-            logger.info(f"Analyzing website {config.url} with AI agent...")
-            try:
-                strategy = await ai_agent.analyze_website(config.url)
-                if strategy:
-                    logger.info(f"AI agent recommended strategy: {strategy.model_dump()}")
-                    # Apply AI agent recommendations
-                    config.deep_crawl = True
-                    config.deep_crawl_strategy = strategy.strategy_type
-                    config.max_depth = strategy.max_depth
-                    config.max_pages = strategy.max_pages
-                    config.content_filter_type = strategy.content_filter_type
-                    config.threshold = strategy.threshold
-                    # If keywords are provided, use best-first strategy
-                    if strategy.focus_keywords:
-                        config.deep_crawl_strategy = "Best-First"
-                        logger.info(f"Using focus keywords: {strategy.focus_keywords}")
-            except Exception as e:
-                logger.error(f"Error analyzing website with AI agent: {e}")
+            # Disable AI features if agent can't be initialized
+            config.enhance_content = False
+            config.analyze_website = False
+            config.ai_question = ""
     else:
         has_ai_agent = False
+    
+    # Analyze website to determine optimal crawling strategy
+    strategy = None
+    if config.analyze_website and has_ai_agent:
+        logger.info(f"Analyzing website {config.url} with AI agent...")
+        try:
+            strategy = await ai_agent.analyze_website(config.url)
+            if strategy:
+                logger.info(f"AI agent recommended strategy: {strategy.model_dump()}")
+                # Apply AI agent recommendations
+                config.deep_crawl = True
+                config.deep_crawl_strategy = strategy.strategy_type
+                config.max_depth = strategy.max_depth
+                config.max_pages = strategy.max_pages
+                config.content_filter_type = strategy.content_filter_type
+                config.threshold = strategy.threshold
+                # If keywords are provided, use best-first strategy
+                if strategy.focus_keywords:
+                    config.deep_crawl_strategy = "Best-First"
+                    logger.info(f"Using focus keywords: {strategy.focus_keywords}")
+        except Exception as e:
+            logger.error(f"Error analyzing website with AI agent: {e}")
+            # Fall back to default parameters if analysis fails
+            strategy = None
+
+    # Provide a default strategy if AI failed to generate one
+    if config.analyze_website and not strategy:
+        logger.warning("AI website analysis failed, using default strategy")
+        # Set default values as a fallback
+        strategy_dict = {
+            "max_depth": 2,
+            "max_pages": 10,
+            "strategy_type": "bfs",
+            "content_filter_type": "Pruning",
+            "threshold": 0.48,
+            "focus_keywords": []
+        }
+        logger.info(f"AI agent recommended strategy: {strategy_dict}")
     
     # Configure content filter
     content_filter = None
@@ -351,13 +373,20 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                                 if raw_markdown is None:
                                     raw_markdown = getattr(page, "raw_markdown", "")
                                 
-                                # Try to get fit_markdown if it exists
-                                fit_markdown = getattr(page, "fit_markdown", "")
+                                # For the processed/fit content, try different possible attribute names
+                                fit_markdown = getattr(page, "fit_markdown", None)
+                                if fit_markdown is None:
+                                    fit_markdown = getattr(page, "filtered_markdown", None)
+                                if fit_markdown is None:
+                                    fit_markdown = getattr(page, "processed_markdown", None)
+                                if fit_markdown is None:
+                                    # If no specialized attribute is found, use the raw markdown
+                                    fit_markdown = raw_markdown
                             except AttributeError:
                                 # Fall back to dictionary access if needed
                                 url = page.get("url", config.url if idx == 1 else "unknown")
                                 raw_markdown = page.get("markdown", "") or page.get("raw_markdown", "")
-                                fit_markdown = page.get("fit_markdown", "")
+                                fit_markdown = page.get("fit_markdown", "") or page.get("filtered_markdown", "") or page.get("processed_markdown", "") or raw_markdown
                             
                             if raw_markdown:
                                 logger.info(f"Found raw markdown for page {idx}: {len(raw_markdown)} chars")
@@ -388,20 +417,35 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                             try:
                                 logger.info("Enhancing content with AI agent...")
                                 enhanced_content = await ai_agent.enhance_content(combined_raw, config.user_query)
-                                result["ai_enhanced_content"] = enhanced_content
-                                logger.info(f"AI enhanced content length: {len(enhanced_content)}")
+                                if enhanced_content:
+                                    result["ai_enhanced_content"] = enhanced_content
+                                    logger.info(f"AI enhanced content length: {len(enhanced_content)}")
+                                else:
+                                    # If enhance_content returns None or empty, use the raw content
+                                    result["ai_enhanced_content"] = combined_raw
+                                    logger.warning("AI enhancement returned empty result, using raw content")
                             except Exception as e:
                                 logger.error(f"Error enhancing content with AI agent: {e}")
+                                # Use raw content as a fallback
+                                result["ai_enhanced_content"] = combined_raw
+                                logger.info(f"Using raw content as fallback for AI enhancement ({len(combined_raw)} chars)")
                         
                         # Use AI agent to answer question if provided
                         if config.use_ai_agent and config.ai_question and combined_raw and has_ai_agent:
                             try:
                                 logger.info(f"Answering question with AI agent: {config.ai_question}")
                                 answer = await ai_agent.answer_question(config.ai_question, combined_raw)
-                                result["ai_answer"] = answer
-                                logger.info(f"AI answer length: {len(answer)}")
+                                if answer:
+                                    result["ai_answer"] = answer
+                                    logger.info(f"AI answer length: {len(answer)}")
+                                else:
+                                    # If answer_question returns None or empty, provide a generic message
+                                    result["ai_answer"] = "Unable to generate answer. Please try again with a different question."
+                                    logger.warning("AI answer returned empty result")
                             except Exception as e:
                                 logger.error(f"Error answering question with AI agent: {e}")
+                                result["ai_answer"] = f"An error occurred while generating the answer: {str(e)}"
+                                logger.info("Set error message as AI answer due to exception")
                         
                         # Store results in AI agent memory if enabled
                         if config.use_ai_agent and config.store_results and combined_raw and has_ai_agent:
@@ -418,6 +462,7 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                                 logger.info("Stored crawl results in AI agent memory")
                             except Exception as e:
                                 logger.error(f"Error storing crawl results in AI agent memory: {e}")
+                                # Continue execution even if storage fails
                         
                         result["status"] = "success"
                         logger.info(f"Generated raw markdown content ({len(combined_raw)} chars)")
@@ -445,7 +490,16 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                             raw_content = getattr(page, "markdown", None)
                             if raw_content is None:
                                 raw_content = getattr(page, "raw_markdown", "")
-                            fit_content = getattr(page, "fit_markdown", "")
+                            
+                            # For the processed/fit content, try different possible attribute names
+                            fit_content = getattr(page, "fit_markdown", None)
+                            if fit_content is None:
+                                fit_content = getattr(page, "filtered_markdown", None)
+                            if fit_content is None:
+                                fit_content = getattr(page, "processed_markdown", None)
+                            if fit_content is None:
+                                # If no specialized attribute is found, use the raw markdown
+                                fit_content = raw_content
                         except AttributeError:
                             logger.warning(f"Unexpected result structure in container")
                     else:
@@ -454,12 +508,21 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                             raw_content = getattr(crawler_result, "markdown", None)
                             if raw_content is None:
                                 raw_content = getattr(crawler_result, "raw_markdown", "")
-                            fit_content = getattr(crawler_result, "fit_markdown", "")
+                            
+                            # For the processed/fit content, try different possible attribute names
+                            fit_content = getattr(crawler_result, "fit_markdown", None)
+                            if fit_content is None:
+                                fit_content = getattr(crawler_result, "filtered_markdown", None)
+                            if fit_content is None:
+                                fit_content = getattr(crawler_result, "processed_markdown", None)
+                            if fit_content is None:
+                                # If no specialized attribute is found, use the raw markdown
+                                fit_content = raw_content
                         except AttributeError:
                             # Fall back to dictionary access
                             if isinstance(crawler_result, dict):
                                 raw_content = crawler_result.get("markdown", "") or crawler_result.get("raw_markdown", "")
-                                fit_content = crawler_result.get("fit_markdown", "")
+                                fit_content = crawler_result.get("fit_markdown", "") or crawler_result.get("filtered_markdown", "") or crawler_result.get("processed_markdown", "") or raw_content
                             else:
                                 logger.warning(f"Unexpected result type: {type(crawler_result)}")
                     
@@ -482,39 +545,55 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                         try:
                             logger.info("Enhancing content with AI agent...")
                             enhanced_content = await ai_agent.enhance_content(raw_content, config.user_query)
-                            result["ai_enhanced_content"] = enhanced_content
-                            logger.info(f"AI enhanced content length: {len(enhanced_content)}")
+                            if enhanced_content:
+                                result["ai_enhanced_content"] = enhanced_content
+                                logger.info(f"AI enhanced content length: {len(enhanced_content)}")
+                            else:
+                                # If enhance_content returns None or empty, use the raw content
+                                result["ai_enhanced_content"] = raw_content
+                                logger.warning("AI enhancement returned empty result, using raw content")
                         except Exception as e:
                             logger.error(f"Error enhancing content with AI agent: {e}")
-                    
-                    # Use AI agent to answer question if provided
-                    if config.use_ai_agent and config.ai_question and raw_content and has_ai_agent:
-                        try:
-                            logger.info(f"Answering question with AI agent: {config.ai_question}")
-                            answer = await ai_agent.answer_question(config.ai_question, raw_content)
-                            result["ai_answer"] = answer
-                            logger.info(f"AI answer length: {len(answer)}")
-                        except Exception as e:
-                            logger.error(f"Error answering question with AI agent: {e}")
-                    
-                    # Store results in AI agent memory if enabled
-                    if config.use_ai_agent and config.store_results and raw_content and has_ai_agent:
-                        try:
-                            ai_agent.store_crawl_results(
-                                config.url,
-                                raw_content,
-                                {
-                                    "crawl_time": result["crawl_time"],
-                                    "user_query": config.user_query
-                                }
-                            )
-                            logger.info("Stored crawl results in AI agent memory")
-                        except Exception as e:
-                            logger.error(f"Error storing crawl results in AI agent memory: {e}")
-                    
-                    result["status"] = "success"
-                else:
-                    logger.warning("No content retrieved from URL")
+                            # Use raw content as a fallback
+                            result["ai_enhanced_content"] = raw_content
+                            logger.info(f"Using raw content as fallback for AI enhancement ({len(raw_content)} chars)")
+                        
+                        # Use AI agent to answer question if provided
+                        if config.use_ai_agent and config.ai_question and raw_content and has_ai_agent:
+                            try:
+                                logger.info(f"Answering question with AI agent: {config.ai_question}")
+                                answer = await ai_agent.answer_question(config.ai_question, raw_content)
+                                if answer:
+                                    result["ai_answer"] = answer
+                                    logger.info(f"AI answer length: {len(answer)}")
+                                else:
+                                    # If answer_question returns None or empty, provide a generic message
+                                    result["ai_answer"] = "Unable to generate answer. Please try again with a different question."
+                                    logger.warning("AI answer returned empty result")
+                            except Exception as e:
+                                logger.error(f"Error answering question with AI agent: {e}")
+                                result["ai_answer"] = f"An error occurred while generating the answer: {str(e)}"
+                                logger.info("Set error message as AI answer due to exception")
+                        
+                        # Store results in AI agent memory if enabled
+                        if config.use_ai_agent and config.store_results and raw_content and has_ai_agent:
+                            try:
+                                ai_agent.store_crawl_results(
+                                    config.url,
+                                    raw_content,
+                                    {
+                                        "crawl_time": result["crawl_time"],
+                                        "user_query": config.user_query
+                                    }
+                                )
+                                logger.info("Stored crawl results in AI agent memory")
+                            except Exception as e:
+                                logger.error(f"Error storing crawl results in AI agent memory: {e}")
+                                # Continue execution even if storage fails
+                        
+                        result["status"] = "success"
+                    else:
+                        logger.warning("No content retrieved from URL")
             
             # Save raw markdown to file if requested
             if config.save_raw_markdown and result["raw_content"]:

@@ -94,7 +94,9 @@ with st.sidebar:
     with st.expander("🌐 Browser Settings", expanded=False):
         headless = st.checkbox("Headless Mode", value=True)
         verbose = st.checkbox("Verbose Output", value=False)
-        cache_mode = st.selectbox("Cache Mode", ["ENABLED", "BYPASS", "DISABLED", "READ_ONLY", "WRITE_ONLY"], index=0)
+        # Ensure we're using the correct case for cache mode values to match the CacheMode enum
+        cache_mode_options = ["ENABLED", "BYPASS", "DISABLED", "READ_ONLY", "WRITE_ONLY"]
+        cache_mode = st.selectbox("Cache Mode", cache_mode_options, index=0)
         
         # Proxy settings
         use_proxy = st.checkbox("Use Proxy", value=False)
@@ -230,8 +232,12 @@ if crawl_button:
         # Run the crawl
         result = asyncio.run(crawl_url(config))
         
-        if result.get("status") == "success":
-            # Stats tab
+        # Store the result in session state so it's not lost when switching tabs
+        st.session_state.crawl_result = result
+        
+        if result.get("status") == "success" or result.get("raw_content"):
+            # Stats tab - use both status and raw_content to determine success
+            # This ensures we show content even if AI features failed
             tabs = st.tabs(["Results", "Raw Markdown", "Processed Markdown", "Stats", "AI Enhanced Content", "AI Answer"])
             
             with tabs[0]:
@@ -284,19 +290,36 @@ if crawl_button:
                                 mime="text/markdown"
                             )
             
+            # Raw markdown tab
             with tabs[1]:
                 if result.get("raw_content"):
-                    st.markdown("### Raw Markdown Content")
-                    st.text_area("Raw Markdown", result["raw_content"], height=500)
+                    st.markdown("""
+                    <div class="result-section">
+                        <h3>Raw Markdown Content</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.code(result["raw_content"], language="markdown")
                 else:
-                    st.info("No raw markdown content generated.")
+                    st.warning("No raw markdown content was generated. Try adjusting the crawl parameters.")
             
+            # Processed markdown tab
             with tabs[2]:
-                if result.get("fit_content"):
-                    st.markdown("### Processed Markdown Content")
-                    st.text_area("Processed Markdown", result["fit_content"], height=500)
+                if result.get("fit_content") and len(result["fit_content"]) > 0:
+                    st.markdown("""
+                    <div class="result-section">
+                        <h3>Processed Markdown Content</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.code(result["fit_content"], language="markdown")
                 else:
-                    st.info("No processed markdown content generated.")
+                    # If no processed content exists, show the raw content instead
+                    st.warning("No processed markdown was generated. Showing raw markdown instead.")
+                    if result.get("raw_content"):
+                        st.code(result["raw_content"], language="markdown")
+                    else:
+                        st.error("No content was generated. Try adjusting the crawl parameters.")
             
             with tabs[3]:
                 st.markdown("### Crawl Statistics")
@@ -307,27 +330,67 @@ if crawl_button:
                 else:
                     st.info("No detailed statistics available.")
             
+            # AI enhanced content tab
             with tabs[4]:
-                if result.get("ai_enhanced_content"):
-                    st.markdown("### AI Enhanced Content")
+                if result.get("ai_enhanced_content") and result["ai_enhanced_content"] != result.get("raw_content"):
+                    st.markdown("""
+                    <div class="result-section">
+                        <h3>AI Enhanced Content</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
                     st.markdown(result["ai_enhanced_content"])
                 else:
-                    if use_ai_agent and enhance_content:
-                        st.info("AI enhancement was enabled but no enhanced content was generated.")
-                    else:
-                        st.info("Enable the AI Agent and Content Enhancement option to generate AI-enhanced content.")
+                    st.warning("AI enhancement was not applied or failed. Check your AI agent settings and API key.")
+                    if result.get("raw_content"):
+                        st.markdown("### Raw content:")
+                        st.markdown(result["raw_content"][:2000] + "..." if len(result.get("raw_content", "")) > 2000 else result.get("raw_content", ""))
             
+            # AI answer tab
             with tabs[5]:
-                if result.get("ai_answer"):
-                    st.markdown("### AI Answer")
-                    st.markdown(result["ai_answer"])
-                elif ai_question:
-                    st.info("No answer was generated for your question.")
+                if result.get("ai_answer") and not result["ai_answer"].startswith("Error") and not result["ai_answer"].startswith("An error occurred"):
+                    st.markdown("""
+                    <div class="result-section">
+                        <h3>AI Answer</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if ai_question:
+                        st.markdown(f"**Question:** {ai_question}")
+                    st.markdown(f"**Answer:** {result['ai_answer']}")
                 else:
-                    st.info("Enter a question in the AI Agent section to get an answer based on the crawled content.")
-        
+                    if "ai_answer" in result and (result["ai_answer"].startswith("Error") or result["ai_answer"].startswith("An error occurred")):
+                        st.error(f"AI answer error: {result['ai_answer']}")
+                    else:
+                        st.warning("No AI answer was generated. Make sure you've enabled the AI agent and asked a question.")
+                    
+                    # New question input for retrying
+                    new_question = st.text_input("Ask a new question about the content")
+                    if st.button("Get Answer") and new_question and result.get("raw_content"):
+                        with st.spinner("Generating answer..."):
+                            # Set up a new config with just the question
+                            question_config = CrawlConfig(
+                                url=url,
+                                use_ai_agent=True,
+                                ai_question=new_question
+                            )
+                            
+                            # Create a simplified result with just the content and question
+                            from crawl_agent import AIAgent
+                            try:
+                                from ai_agent import ai_agent
+                                answer = asyncio.run(ai_agent.answer_question(new_question, result["raw_content"]))
+                                st.markdown(f"**Question:** {new_question}")
+                                st.markdown(f"**Answer:** {answer}")
+                            except Exception as e:
+                                st.error(f"Error generating answer: {str(e)}")
         else:
-            st.error(f"Error during crawling: {result.get('error', 'Unknown error')}")
-            if "raw_content" in result and result["raw_content"]:
-                st.markdown("### Partial Raw Content")
-                st.text_area("Partial Raw Content", result["raw_content"], height=300)
+            st.error(f"Failed to crawl {url}: {result.get('error', 'Unknown error')}")
+            if "error" in result:
+                st.code(result["error"])
+
+# Add a feature to view last crawl result
+if not crawl_button and "crawl_result" in st.session_state:
+    if st.button("View Last Crawl Result"):
+        result = st.session_state.crawl_result
+        # Then reuse the code from above to display the results
