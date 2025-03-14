@@ -1,6 +1,7 @@
 import streamlit as st
 import asyncio
 import json
+import time
 import os
 from dotenv import load_dotenv
 from crawl_agent import crawl_url, CrawlConfig
@@ -202,12 +203,8 @@ if start_button and url:
         result = asyncio.run(crawl_url(config))
         
         if result:
-            # Check if result is a dictionary (error case) or an object
-            if isinstance(result, dict):
-                # Display error information
-                st.error("Crawl failed")
-                st.json(result)
-            else:
+            # Check if result is a dictionary with a success flag
+            if isinstance(result, dict) and result.get('success', False):
                 # Create result display sections
                 st.markdown("## 📄 Crawl Results")
                 
@@ -218,11 +215,11 @@ if start_button and url:
                     """, unsafe_allow_html=True)
                     
                     # Display key metadata
-                    st.markdown(f"**Title:** {result.metadata.get('title', 'N/A')}")
-                    st.markdown(f"**Description:** {result.metadata.get('description', 'N/A')}")
+                    st.markdown(f"**Title:** {result.get('metadata', {}).get('title', 'N/A')}")
+                    st.markdown(f"**Description:** {result.get('metadata', {}).get('description', 'N/A')}")
                     
                     # Full metadata JSON
-                    st.json(result.metadata)
+                    st.json(result.get('metadata', {}))
                     
                     st.markdown("</div>", unsafe_allow_html=True)
                 
@@ -232,12 +229,18 @@ if start_button and url:
                     <div class="result-section">
                     """, unsafe_allow_html=True)
                     
-                    st.code(result.markdown.raw_markdown, language="markdown")
+                    # Read the raw markdown file
+                    try:
+                        with open(result['raw_file_path'], 'r', encoding='utf-8') as f:
+                            raw_markdown = f.read()
+                        st.code(raw_markdown, language="markdown")
+                    except Exception as e:
+                        st.error(f"Could not read raw markdown file: {e}")
                     
                     # Download button for raw markdown
                     st.download_button(
                         label="Download Raw Markdown",
-                        data=result.markdown.raw_markdown,
+                        data=raw_markdown,
                         file_name=f"crawl4ai_raw_{time.strftime('%Y%m%d_%H%M%S')}.md",
                         mime="text/markdown"
                     )
@@ -245,12 +248,16 @@ if start_button and url:
                     st.markdown("</div>", unsafe_allow_html=True)
                 
                 # Extracted Content Section
-                if hasattr(result, 'extracted_content') and result.extracted_content:
+                if result.get('extracted_content'):
                     with st.expander("🔍 Extracted Content", expanded=False):
                         st.markdown("""
                         <div class="result-section">
                         """, unsafe_allow_html=True)
                         
-                        st.json(result.extracted_content)
+                        st.json(result['extracted_content'])
                         
                         st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                # If the result is not a successful dictionary or is an error
+                st.error("Crawl failed")
+                st.json(result)
