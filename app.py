@@ -51,6 +51,35 @@ with st.sidebar:
         cache_mode = st.selectbox("Cache Mode", 
             options=["Enabled", "Bypass", "Disabled"],
             help="Control browser caching behavior")
+        
+        # Add proxy configuration section
+        use_proxy = st.checkbox("Use Proxy", value=False, 
+            help="Enable proxy for web requests")
+        
+        proxy_server = None
+        proxy_username = None
+        proxy_password = None
+        
+        if use_proxy:
+            proxy_server = st.text_input("Proxy Server (host:port)", 
+                placeholder="http://proxy-server-address:port",
+                help="URL of the proxy server including protocol")
+            
+            proxy_auth = st.checkbox("Proxy Authentication", value=False, 
+                help="Enable if your proxy requires username and password")
+            
+            if proxy_auth:
+                proxy_username = st.text_input("Proxy Username", 
+                    help="Username for proxy authentication")
+                proxy_password = st.text_input("Proxy Password", type="password", 
+                    help="Password for proxy authentication")
+            
+            st.info("💡 Proxies can help access geo-restricted content and avoid IP blocking when crawling.")
+            if proxy_server:
+                if proxy_auth and proxy_username and proxy_password:
+                    st.success(f"✅ Proxy configured with authentication")
+                elif proxy_server:
+                    st.success(f"✅ Proxy configured: {proxy_server}")
 
     with st.expander("🧹 Content Filtering"):
         filter_type = st.selectbox("Filter Strategy", 
@@ -144,6 +173,10 @@ features = [
         "description": "Control how the browser behaves during crawling. Headless mode runs invisibly, while verbose output provides detailed logs."
     },
     {
+        "title": "Proxy Support",
+        "description": "Connect through proxy servers to access geo-restricted content or avoid IP blocking. Supports authentication for private proxies."
+    },
+    {
         "title": "Content Filtering",
         "description": "Refine the content you extract. Pruning filter removes less relevant content, while BM25 allows keyword-based selection."
     },
@@ -185,6 +218,13 @@ if start_button and url:
             threshold_type=threshold_type,
             user_query=user_query,
             bm25_threshold=bm25_threshold,
+            
+            # Add proxy settings
+            use_proxy=use_proxy,
+            proxy_server=proxy_server if use_proxy else None,
+            proxy_username=proxy_username if use_proxy and proxy_auth else None,
+            proxy_password=proxy_password if use_proxy and proxy_auth else None,
+            
             extraction_type=extraction_type,
             llm_provider=llm_provider if extraction_type == "LLM" else None,
             llm_api_key=llm_api_key if extraction_type == "LLM" else None,

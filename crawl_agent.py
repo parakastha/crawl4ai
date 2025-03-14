@@ -28,6 +28,12 @@ class CrawlConfig(BaseModel):
     cache_mode: str = "Enabled"  # "Enabled", "Bypass", "Disabled"
     content_filter_type: str = "Pruning"  # "Pruning", "BM25"
     
+    # Proxy settings
+    use_proxy: bool = False
+    proxy_server: Optional[str] = None
+    proxy_username: Optional[str] = None
+    proxy_password: Optional[str] = None
+    
     # Pruning filter options
     threshold: float = 0.48
     threshold_type: str = "fixed"  # "fixed", "auto"
@@ -114,6 +120,26 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         headless=config.headless,
         verbose=config.verbose
     )
+    
+    # Add proxy configuration if enabled
+    if config.use_proxy and config.proxy_server:
+        proxy_config = {
+            "server": config.proxy_server
+        }
+        
+        # Add authentication if provided
+        if config.proxy_username and config.proxy_password:
+            proxy_config["username"] = config.proxy_username
+            proxy_config["password"] = config.proxy_password
+        
+        # Log proxy usage (without credentials)
+        if config.proxy_username:
+            logger.info(f"Using proxy server with authentication: {config.proxy_server}")
+        else:
+            logger.info(f"Using proxy server: {config.proxy_server}")
+            
+        # Set proxy in browser config
+        browser_config.proxy = proxy_config
     
     # Cache mode mapping
     cache_mode_map = {
