@@ -7,10 +7,10 @@ import argparse
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 from crawl4ai import (AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode,
-                     PruningContentFilter, BM25ContentFilter,
-                     LLMExtractionStrategy, JsonCssExtractionStrategy,
-                     BFSDeepCrawlStrategy, DFSDeepCrawlStrategy, BestFirstCrawlingStrategy,
-                     DefaultMarkdownGenerator, LXMLWebScrapingStrategy)
+                      PruningContentFilter, BM25ContentFilter,
+                      LLMExtractionStrategy, JsonCssExtractionStrategy,
+                      BFSDeepCrawlStrategy, DFSDeepCrawlStrategy, BestFirstCrawlingStrategy,
+                      DefaultMarkdownGenerator, LXMLWebScrapingStrategy)
 from crawl4ai.deep_crawling.scorers import KeywordRelevanceScorer
 
 # Configure logging
@@ -55,6 +55,47 @@ class CrawlConfig(BaseModel):
     
     # Custom JavaScript
     js_code: Optional[str] = None
+
+def is_meaningful_content(content: str, min_length: int = 50) -> bool:
+    """
+    Check if the content is meaningful (not empty, not just whitespace)
+    
+    Args:
+        content (str): The content to check
+        min_length (int, optional): Minimum length to consider content meaningful. Defaults to 50.
+    
+    Returns:
+        bool: True if content is meaningful, False otherwise
+    """
+    # Check if content is None or empty
+    if not content:
+        return False
+    
+    # Remove whitespace and check length
+    stripped_content = content.strip()
+    
+    # Check against minimum length
+    if len(stripped_content) < min_length:
+        return False
+    
+    # Additional checks for meaningfulness can be added here
+    # For example, checking against common placeholder or error texts
+    meaningless_indicators = [
+        'no content available', 
+        'page not found', 
+        'error', 
+        'forbidden', 
+        'access denied'
+    ]
+    
+    # Convert to lowercase for case-insensitive check
+    lower_content = stripped_content.lower()
+    
+    # Check if content contains any meaningless indicators
+    if any(indicator in lower_content for indicator in meaningless_indicators):
+        return False
+    
+    return True
 
 async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
     """
@@ -215,22 +256,10 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                         
                         # Check content for error indicators or empty content
                         if hasattr(r, 'markdown') and hasattr(r.markdown, 'raw_markdown'):
-                            content = r.markdown.raw_markdown.lower()
-                            # Expanded list of error indicators and empty content patterns
-                            error_indicators = [
-                                '403 forbidden', '404 not found', 'no content available', 
-                                'access denied', '[no content available]', 'page not found',
-                                'error 403', 'error 404', 'error 401', 'error 500'
-                            ]
-                            
-                            if any(indicator in content for indicator in error_indicators):
+                            # Use the new is_meaningful_content function
+                            if not is_meaningful_content(r.markdown.raw_markdown):
                                 is_error = True
-                                logger.warning(f"Filtering out page with error content: {r.url}")
-                            
-                            # Also filter out pages with essentially no content
-                            if len(content.strip()) < 50:  # Very short content is likely not useful
-                                is_error = True
-                                logger.warning(f"Filtering out page with minimal content: {r.url}")
+                                logger.warning(f"Filtering out page with minimal or meaningless content: {r.url}")
                         else:
                             # Pages without markdown are also considered errors
                             is_error = True
@@ -239,7 +268,7 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                         # Only keep non-error pages
                         if not is_error:
                             valid_results.append(r)
-
+    
                     if len(valid_results) < len(results):
                         logger.info(f"Filtered out {len(results) - len(valid_results)} error or empty pages. Processing {len(valid_results)} valid pages.")
                         results = valid_results
@@ -314,19 +343,23 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                     logger.info(f"Combined raw markdown length: {len(final_raw)}")
                     logger.info(f"Combined fit markdown length: {len(final_fit)}")
                     
-                    # Save the combined markdown content to files
+                    # Save the combined markdown content to files only if content is meaningful
                     timestamp = time.strftime('%Y%m%d_%H%M%S')
-                    raw_file_path = f"crawl4ai_all_pages_raw_{timestamp}.md"
-                    fit_file_path = f"crawl4ai_all_pages_fit_{timestamp}.md"
+                    raw_file_path = None
+                    fit_file_path = None
                     
-                    with open(raw_file_path, "w", encoding="utf-8") as file:
-                        file.write(final_raw)
-                    logger.info(f"Saved all pages raw markdown to {raw_file_path}")
-
-                    with open(fit_file_path, "w", encoding="utf-8") as file:
-                        file.write(final_fit)
-                    logger.info(f"Saved all pages fit markdown to {fit_file_path}")
-
+                    if is_meaningful_content(final_raw):
+                        raw_file_path = f"crawl4ai_all_pages_raw_{timestamp}.md"
+                        with open(raw_file_path, "w", encoding="utf-8") as file:
+                            file.write(final_raw)
+                        logger.info(f"Saved all pages raw markdown to {raw_file_path}")
+                    
+                    if is_meaningful_content(final_fit):
+                        fit_file_path = f"crawl4ai_all_pages_fit_{timestamp}.md"
+                        with open(fit_file_path, "w", encoding="utf-8") as file:
+                            file.write(final_fit)
+                        logger.info(f"Saved all pages fit markdown to {fit_file_path}")
+                    
                     # Create a completely new result object instead of trying to modify the existing one
                     import copy
                     combined_result = copy.deepcopy(results[0])
@@ -378,18 +411,22 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
                     logger.error("Result doesn't have expected markdown attributes")
                     return {"error": "Result doesn't have expected markdown attributes"}
                 
-                # Save the markdown content to files if we have valid content
+                # Save the markdown content to files only if content is meaningful
                 timestamp = time.strftime('%Y%m%d_%H%M%S')
-                raw_file_path = f"crawl4ai_raw_{timestamp}.md"
-                fit_file_path = f"crawl4ai_fit_{timestamp}.md"
+                raw_file_path = None
+                fit_file_path = None
                 
-                with open(raw_file_path, "w", encoding="utf-8") as file:
-                    file.write(result.markdown.raw_markdown)
-                logger.info(f"Saved raw markdown to {raw_file_path}")
-
-                with open(fit_file_path, "w", encoding="utf-8") as file:
-                    file.write(result.markdown.fit_markdown)
-                logger.info(f"Saved fit markdown to {fit_file_path}")
+                if is_meaningful_content(result.markdown.raw_markdown):
+                    raw_file_path = f"crawl4ai_raw_{timestamp}.md"
+                    with open(raw_file_path, "w", encoding="utf-8") as file:
+                        file.write(result.markdown.raw_markdown)
+                    logger.info(f"Saved raw markdown to {raw_file_path}")
+                
+                if is_meaningful_content(result.markdown.fit_markdown):
+                    fit_file_path = f"crawl4ai_fit_{timestamp}.md"
+                    with open(fit_file_path, "w", encoding="utf-8") as file:
+                        file.write(result.markdown.fit_markdown)
+                    logger.info(f"Saved fit markdown to {fit_file_path}")
                 
                 return {
                     "success": True,
