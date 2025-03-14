@@ -91,6 +91,20 @@ class CrawlConfig(BaseModel):
     word_count_threshold: int = 0
     excluded_tags: List[str] = ["script", "style", "svg", "noscript"]
     process_iframes: bool = False  # Merge iframe content into the final output
+    
+    # Link filtering options
+    exclude_external_links: bool = False  # Skip links pointing to external domains
+    exclude_social_media_links: bool = False  # Skip links pointing to social media sites
+    exclude_domains: List[str] = []  # Custom list of domains to exclude
+    exclude_social_media_domains: List[str] = []  # Custom list of social media domains to exclude
+    
+    # Media filtering options
+    exclude_external_images: bool = False  # Don't include images from external domains
+    
+    # Additional HTML filtering
+    keep_data_attributes: bool = False  # Keep data-* attributes in HTML
+    keep_attrs: List[str] = []  # List of specific attributes to keep
+    remove_forms: bool = False  # Remove form elements from output
 
 def is_meaningful_content(content: str, min_length: int = 50, is_deep_crawl: bool = False) -> bool:
     """
@@ -423,6 +437,20 @@ async def crawl_url(config: CrawlConfig) -> Dict[str, Any]:
         # Content selection options
         word_count_threshold=config.word_count_threshold,
         excluded_tags=config.excluded_tags,
+        
+        # Link filtering options
+        exclude_external_links=config.exclude_external_links,
+        exclude_social_media_links=config.exclude_social_media_links,
+        exclude_domains=config.exclude_domains,
+        exclude_social_media_domains=config.exclude_social_media_domains,
+        
+        # Media filtering options
+        exclude_external_images=config.exclude_external_images,
+        
+        # Additional HTML filtering
+        keep_data_attributes=config.keep_data_attributes,
+        keep_attrs=config.keep_attrs,
+        remove_forms=config.remove_forms,
         
         # Session parameters for multi-step interaction
         js_only=config.js_only if not config.multi_step_enabled else False,  # Only use in first step if multi-step enabled

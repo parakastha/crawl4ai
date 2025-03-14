@@ -243,6 +243,40 @@ with st.sidebar:
                                     ["script", "style", "svg", "path", "noscript", "header", "footer", "nav", "form"], 
                                     default=["script", "style", "svg", "noscript"],
                                     help="HTML tags to exclude from extraction")
+        
+        st.markdown("### Link Filtering")
+        exclude_external_links = st.checkbox("Exclude External Links", value=False,
+                                          help="Remove links pointing to external domains")
+        exclude_social_media_links = st.checkbox("Exclude Social Media Links", value=False,
+                                             help="Remove links pointing to social media platforms")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            exclude_domains_text = st.text_area("Domains to Exclude (one per line)", "",
+                                           help="Specific domains to exclude from links")
+            exclude_domains = [domain.strip() for domain in exclude_domains_text.split("\n") if domain.strip()]
+        
+        with col2:
+            exclude_social_domains_text = st.text_area("Social Media Domains to Exclude (one per line)", "",
+                                                  help="Additional social media domains to exclude")
+            exclude_social_media_domains = [domain.strip() for domain in exclude_social_domains_text.split("\n") if domain.strip()]
+        
+        st.markdown("### Media Filtering")
+        exclude_external_images = st.checkbox("Exclude External Images", value=False,
+                                          help="Don't include images from external domains")
+        
+        st.markdown("### Additional HTML Filtering")
+        col1, col2 = st.columns(2)
+        with col1:
+            keep_data_attributes = st.checkbox("Keep Data Attributes", value=False,
+                                           help="Keep data-* attributes in HTML output")
+            remove_forms = st.checkbox("Remove Forms", value=False,
+                                    help="Remove form elements from output")
+        
+        with col2:
+            keep_attrs_text = st.text_area("Attributes to Keep (one per line)", "",
+                                      help="Specific HTML attributes to keep in the output")
+            keep_attrs = [attr.strip() for attr in keep_attrs_text.split("\n") if attr.strip()]
 
 # Main content area with crawl button
 crawl_button = st.button("🕸️ Start Crawling")
@@ -311,7 +345,15 @@ if crawl_button:
             remove_overlay_elements=remove_overlay_elements,
             save_raw_markdown=save_raw_markdown,
             word_count_threshold=word_count_threshold,
-            excluded_tags=excluded_tags
+            excluded_tags=excluded_tags,
+            exclude_external_links=exclude_external_links,
+            exclude_social_media_links=exclude_social_media_links,
+            exclude_domains=exclude_domains,
+            exclude_social_media_domains=exclude_social_media_domains,
+            exclude_external_images=exclude_external_images,
+            keep_data_attributes=keep_data_attributes,
+            remove_forms=remove_forms,
+            keep_attrs=keep_attrs
         )
         
         # Run the crawl
