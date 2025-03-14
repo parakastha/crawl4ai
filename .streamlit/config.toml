@@ -1,13 +1,2 @@
 [server]
-# Enable hot reload
 runOnSave = true
-headless = true
-fileWatcherType = "auto"
-
-[browser]
-serverAddress = "localhost"
-gatherUsageStats = false
-serverPort = 8501
-
-[theme]
-base = "light"
